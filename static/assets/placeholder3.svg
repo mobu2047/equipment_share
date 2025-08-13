@@ -1,0 +1,15 @@
+<svg width="800" height="450" viewBox="0 0 800 450" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g3" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="450" fill="url(#g3)"/>
+  <g fill="none" stroke="#f59e0b" opacity="0.35">
+    <path d="M150 340 C 250 120, 550 120, 650 340"/>
+  </g>
+  <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#93a1b1" font-family="Segoe UI, Roboto, Arial" font-size="28">设备占位图 3</text>
+</svg>
+
+

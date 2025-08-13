@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>实验设备共享平台</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+    <!-- 页面主容器：包含输入区、对话结果、设备推荐卡片位 -->
+    <div class="container">
+        <h1>实验设备共享平台</h1>
+
+        <section class="chat-section">
+            <h2>对话</h2>
+            <div class="chat-box">
+                <textarea id="prompt" placeholder="请输入实验描述或向模型提问……"></textarea>
+                <button id="sendBtn">发送</button>
+            </div>
+            <div id="reply" class="reply"></div>
+        </section>
+
+        <section class="recommend-section">
+            <h2>设备推荐</h2>
+            <div class="cards">
+                <!-- 预留 3 个图片+文字位置，初始使用占位图 -->
+                <div class="card" id="card1">
+                    <img src="/static/assets/placeholder1.svg" alt="设备1" />
+                    <div class="card-body">
+                        <h3 class="card-title">设备位 1</h3>
+                        <p class="card-desc">等待推荐…</p>
+                    </div>
+                </div>
+                <div class="card" id="card2">
+                    <img src="/static/assets/placeholder2.svg" alt="设备2" />
+                    <div class="card-body">
+                        <h3 class="card-title">设备位 2</h3>
+                        <p class="card-desc">等待推荐…</p>
+                    </div>
+                </div>
+                <div class="card" id="card3">
+                    <img src="/static/assets/placeholder3.svg" alt="设备3" />
+                    <div class="card-body">
+                        <h3 class="card-title">设备位 3</h3>
+                        <p class="card-desc">等待推荐…</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+
+
