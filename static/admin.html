@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>设备管理</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+        .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        th { text-align: left; color: #93a1b1; font-weight: 600; }
+        td img { width: 80px; height: 56px; object-fit: cover; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; }
+        .danger { background: #ef4444; color: white; border: none; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+        .danger:hover { filter: brightness(1.1); }
+    </style>
+    </head>
+<body>
+    <div class="container">
+        <h1>设备管理</h1>
+
+        <div class="toolbar">
+            <a href="/" style="color:#4f8cff">返回首页</a>
+            <a href="/docs" target="_blank" style="color:#4f8cff">API 文档</a>
+        </div>
+
+        <table id="tbl">
+            <thead>
+                <tr>
+                    <th>图片</th>
+                    <th>名称</th>
+                    <th>描述</th>
+                    <th>标签</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script>
+        async function fetchList() {
+            const resp = await fetch('/api/rag/list');
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        }
+
+        async function remove(id) {
+            if (!confirm('确认删除该设备？')) return;
+            const resp = await fetch('/api/rag/delete/' + encodeURIComponent(id), { method: 'DELETE' });
+            if (!resp.ok) alert('删除失败');
+            await load();
+        }
+
+        async function load() {
+            const data = await fetchList();
+            const tbody = document.querySelector('#tbl tbody');
+            tbody.innerHTML = '';
+            for (const it of (data.items || [])) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${it.image_url ? `<img src="${it.image_url}" />` : '-'}</td>
+                    <td>${it.name || ''}</td>
+                    <td><div style="max-width:420px">${it.description || ''}</div></td>
+                    <td>${(it.tags || []).join(', ')}</td>
+                    <td><button class="danger" onclick="remove('${it.id}')">删除</button></td>
+                `;
+                tbody.appendChild(tr);
+            }
+        }
+
+        load();
+    </script>
+</body>
+</html>
+
+

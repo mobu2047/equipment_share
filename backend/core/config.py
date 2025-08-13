@@ -27,8 +27,13 @@ class Settings(BaseModel):
 
     ollama_host: str = Field(default="http://localhost:11434", description="Ollama 服务地址")
     ollama_model: str = Field(default="llama3.1:8b", description="默认模型名称")
+    ollama_embed_model: str = Field(default="nomic-embed-text", description="Embedding 模型名称")
 
     log_level: str = Field(default="INFO", description="日志等级：DEBUG/INFO/WARNING/ERROR")
+
+    # 数据与上传目录
+    data_dir: str = Field(default="data", description="RAG 数据存储目录")
+    uploads_dir: str = Field(default="static/uploads", description="图片上传目录（挂载到 /static/uploads）")
 
 
 @lru_cache(maxsize=1)
@@ -44,7 +49,10 @@ def get_settings() -> Settings:
         api_port=int(os.getenv("API_PORT", Settings.model_fields["api_port"].default)),
         ollama_host=os.getenv("OLLAMA_HOST", Settings.model_fields["ollama_host"].default),
         ollama_model=os.getenv("OLLAMA_MODEL", Settings.model_fields["ollama_model"].default),
+        ollama_embed_model=os.getenv("OLLAMA_EMBED_MODEL", Settings.model_fields["ollama_embed_model"].default),
         log_level=os.getenv("LOG_LEVEL", Settings.model_fields["log_level"].default),
+        data_dir=os.getenv("DATA_DIR", Settings.model_fields["data_dir"].default),
+        uploads_dir=os.getenv("UPLOADS_DIR", Settings.model_fields["uploads_dir"].default),
     )
 
 

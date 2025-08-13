@@ -23,6 +23,7 @@ from backend.core.config import get_settings
 from backend.core.logger import logger
 from backend.routers.chat import router as chat_router
 from backend.routers.equipment import router as equipment_router
+from backend.routers.rag import router as rag_router
 
 
 def create_app() -> FastAPI:
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     # 路由
     app.include_router(chat_router)
     app.include_router(equipment_router)
+    app.include_router(rag_router)
 
     # 静态文件
     static_dir = Path(__file__).resolve().parents[1] / "static"
@@ -53,6 +55,10 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def _startup() -> None:
         logger.info("startup", extra={"event": "startup"})
+        # 确保数据与上传目录存在
+        settings = get_settings()
+        (Path(settings.data_dir)).mkdir(parents=True, exist_ok=True)
+        (Path(settings.uploads_dir)).mkdir(parents=True, exist_ok=True)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
