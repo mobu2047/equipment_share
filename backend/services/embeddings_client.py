@@ -27,13 +27,22 @@ class EmbeddingsClient:
         self._client = httpx.AsyncClient(base_url=self._base_url, timeout=60.0)
 
     async def embed(self, text: str) -> List[float]:
-        """为输入文本生成 embedding 向量。"""
-        body = {"model": self._model, "input": text}
+        """为输入文本生成 embedding 向量。
+
+        兼容 Ollama 的 embeddings API：
+        - 使用字段 `prompt`（不是 `input`）。
+        - 响应通常包含 `embedding` 字段。
+        """
+        body = {"model": self._model, "prompt": text}
         logger.info("embeddings.request", extra={"event": "embed", "model": self._model})
         resp = await self._client.post("/api/embeddings", json=body)
         resp.raise_for_status()
         data = resp.json()
-        vec = data.get("embedding") or data.get("data", [{}])[0].get("embedding")
+        # 先处理常见的错误字段
+        if isinstance(data, dict) and data.get("error"):
+            raise RuntimeError(f"Embedding API error: {data.get('error')}")
+
+        vec = data.get("embedding") or (data.get("data", [{}])[0].get("embedding") if isinstance(data.get("data"), list) and data.get("data") else None)
         if not vec:
             raise RuntimeError("Embedding response malformed")
         logger.info("embeddings.success", extra={"event": "embed_ok", "dim": len(vec)})

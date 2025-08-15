@@ -43,7 +43,10 @@ class RagStore:
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._data_dir = Path(settings.data_dir)
+        # 将数据目录锚定到项目根，避免因工作目录变化导致找不到数据
+        project_root = Path(__file__).resolve().parents[2]
+        configured = Path(settings.data_dir)
+        self._data_dir = configured if configured.is_absolute() else (project_root / configured)
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._store_file = self._data_dir / "rag_store.json"
         self._items: List[RagItem] = []
@@ -56,7 +59,34 @@ class RagStore:
         try:
             with _LOCK, self._store_file.open("r", encoding="utf-8") as f:
                 raw = json.load(f)
-            self._items = [RagItem(**it) for it in raw.get("items", [])]
+            loaded: List[RagItem] = []
+            for it in raw.get("items", []):
+                try:
+                    # 兼容旧数据：容错缺失/多余字段
+                    name = it.get("name", "")
+                    description = it.get("description", "")
+                    tags = it.get("tags") or []
+                    if not isinstance(tags, list):
+                        tags = []
+                    image_url = it.get("image_url", "")
+                    text = it.get("text") or f"{name}\n{description}\nTags: {', '.join(tags)}"
+                    vector = it.get("vector") or []
+                    if not isinstance(vector, list):
+                        vector = []
+                    item = RagItem(
+                        id=it.get("id") or str(uuid.uuid4()),
+                        name=name,
+                        description=description,
+                        tags=tags,
+                        image_url=image_url,
+                        text=text,
+                        vector=vector,
+                    )
+                    loaded.append(item)
+                except Exception:
+                    # 单条容错，避免整体加载失败
+                    continue
+            self._items = loaded
             logger.info("rag_store.loaded", extra={"event": "rag_store_load", "count": len(self._items)})
         except Exception:
             logger.error("rag_store.load_failed", extra={"event": "rag_store_load_error"})
@@ -72,6 +102,18 @@ class RagStore:
         # 计算余弦相似度并做 0 除保护
         denom = (np.linalg.norm(a) * np.linalg.norm(b)) or 1e-9
         return float(np.dot(a, b) / denom)
+
+    @staticmethod
+    def _kw_score(query: str, text: str) -> float:
+        """简易关键词相似度兜底（Jaccard 近似）。"""
+        remove = set(" \t\n\r，。；：、,.!?！?()（）[]【】'\"`|/")
+        qa = {ch for ch in query if ch not in remove}
+        ta = {ch for ch in text if ch not in remove}
+        if not qa or not ta:
+            return 0.0
+        inter = len(qa & ta)
+        union = len(qa | ta) or 1
+        return inter / union
 
     def upsert(self, *, name: str, description: str, tags: List[str], image_url: str, vector: List[float]) -> str:
         """新增或更新条目：用 name+tags 作为简易键去重，如重名则覆盖。"""
@@ -103,15 +145,22 @@ class RagStore:
         self._save()
         return item.id
 
-    def search(self, *, query_vector: List[float], top_k: int = 3) -> List[Dict[str, Any]]:
+    def search(self, *, query_vector: List[float], top_k: int = 3, query_text: str = "") -> List[Dict[str, Any]]:
         if not self._items:
             return []
         q = np.asarray(query_vector, dtype=np.float32)
         scored: List[Tuple[float, RagItem]] = []
         for it in self._items:
-            v = np.asarray(it.vector, dtype=np.float32)
-            s = self._cosine(q, v)
-            scored.append((s, it))
+            # 允许兜底：向量无效时采用关键词相似
+            cos = 0.0
+            if it.vector:
+                v = np.asarray(it.vector, dtype=np.float32)
+                if v.ndim == 1 and q.shape == v.shape:
+                    cos = self._cosine(q, v)
+            cos01 = (cos + 1.0) / 2.0  # -1..1 -> 0..1
+            kw = self._kw_score(query_text or "", it.text)
+            score = 0.75 * cos01 + 0.25 * kw
+            scored.append((score, it))
         scored.sort(key=lambda x: x[0], reverse=True)
         out = []
         for s, it in scored[: max(1, top_k)]:
@@ -146,5 +195,23 @@ class RagStore:
                 self._save()
                 return True
         return False
+
+    async def reindex_async(self, embed_async) -> int:
+        """使用异步 embed 函数重建全部向量。
+
+        embed_async: Awaitable[str -> List[float]]
+        返回：成功重建的条目数量
+        """
+        updated = 0
+        for idx, it in enumerate(self._items):
+            try:
+                new_vec = await embed_async(it.text)
+                self._items[idx].vector = list(new_vec)
+                updated += 1
+            except Exception:
+                continue
+        if updated:
+            self._save()
+        return updated
 
 

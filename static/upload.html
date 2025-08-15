@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>新增设备</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+        /* 仅本页的表单布局微调 */
+        .form {
+            display: grid; gap: 12px;
+            background: var(--card);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 16px;
+            max-width: 720px;
+        }
+        .row { display: grid; gap: 6px; }
+        .row label { font-weight: 600; color: var(--muted); }
+        .row input[type="text"], .row textarea {
+            background: #0f172a; color: var(--text);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; padding: 10px;
+        }
+        .row textarea { min-height: 100px; resize: vertical; }
+        .actions { display: flex; gap: 12px; align-items: center; }
+        .btn {
+            background: var(--primary); color: white; border: none;
+            border-radius: 8px; padding: 10px 16px; cursor: pointer; font-weight: 600;
+        }
+        .btn:hover { filter: brightness(1.1); }
+        .preview { margin-top: 12px; display: flex; gap: 12px; align-items: center; }
+        .preview img { width: 160px; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); }
+        .hint { color: var(--muted); }
+        .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>新增设备</h1>
+
+        <div class="toolbar">
+            <a href="/" style="color:#4f8cff">返回首页</a>
+            <a href="/static/admin.html" style="color:#4f8cff">设备管理</a>
+        </div>
+
+        <!--
+            为什么使用表单 + fetch(FormData)：
+            - 便于文件上传（multipart/form-data）
+            - 保留良好的错误提示与结果展示
+        -->
+        <form id="f" class="form" onsubmit="return false;">
+            <div class="row">
+                <label for="name">名称</label>
+                <input id="name" name="name" type="text" required placeholder="例如：电子显微镜 B" />
+            </div>
+            <div class="row">
+                <label for="description">描述</label>
+                <textarea id="description" name="description" placeholder="高分辨率形貌分析…"></textarea>
+            </div>
+            <div class="row">
+                <label for="tags">标签（逗号分隔）</label>
+                <input id="tags" name="tags" type="text" placeholder="sem,microscopy,materials" />
+            </div>
+            <div class="row">
+                <label for="image">图片</label>
+                <input id="image" name="image" type="file" accept="image/*" />
+                <div class="hint">支持常见图片格式，大小请适度。</div>
+                <div class="preview" id="preview" style="display:none;">
+                    <img id="previewImg" alt="预览" />
+                    <div class="hint" id="previewName"></div>
+                </div>
+            </div>
+            <div class="actions">
+                <button class="btn" id="submitBtn">提交</button>
+                <span class="hint" id="msg"></span>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // 选择并预览图片：提升用户体验
+        const imageEl = document.getElementById('image');
+        const preview = document.getElementById('preview');
+        const previewImg = document.getElementById('previewImg');
+        const previewName = document.getElementById('previewName');
+        imageEl.addEventListener('change', () => {
+            const file = imageEl.files && imageEl.files[0];
+            if (!file) { preview.style.display = 'none'; return; }
+            const url = URL.createObjectURL(file);
+            previewImg.src = url;
+            previewName.textContent = file.name + ' (' + Math.round(file.size/1024) + ' KB)';
+            preview.style.display = 'flex';
+        });
+
+        // 提交表单到 /api/rag/upsert
+        const form = document.getElementById('f');
+        const submitBtn = document.getElementById('submitBtn');
+        const msg = document.getElementById('msg');
+        async function submitForm() {
+            msg.textContent = '提交中…';
+            submitBtn.disabled = true;
+            try {
+                const fd = new FormData(form);
+                const resp = await fetch('/api/rag/upsert', {
+                    method: 'POST',
+                    body: fd,
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                const data = await resp.json();
+                msg.textContent = '已保存，ID: ' + (data.id || '');
+            } catch (e) {
+                msg.textContent = '提交失败：' + (e && e.message ? e.message : '未知错误');
+            } finally {
+                submitBtn.disabled = false;
+            }
+        }
+        submitBtn.addEventListener('click', submitForm);
+    </script>
+</body>
+</html>
+
+

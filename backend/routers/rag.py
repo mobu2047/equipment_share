@@ -9,7 +9,13 @@ RAG 路由
 
 import os
 from pathlib import Path
+import sys
 from typing import List, Optional
+
+# 允许在直接运行单文件或非常规入口下解析 package 导入
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
@@ -77,7 +83,7 @@ async def search_equipment(query: str, top_k: int = 3) -> RecommendResponse:
         raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
 
     store = RagStore()
-    items = store.search(query_vector=qvec, top_k=top_k)
+    items = store.search(query_vector=qvec, top_k=top_k, query_text=query)
     return RecommendResponse(items=[EquipmentItem(**it) for it in items])
 
 
@@ -92,23 +98,56 @@ async def ask_with_context(query: str, top_k: int = 3) -> dict:
         raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
 
     store = RagStore()
-    docs = store.search(query_vector=qvec, top_k=top_k)
+    docs = store.search(query_vector=qvec, top_k=top_k, query_text=query)
 
-    # 2) 组织上下文并调用 LLM
-    context = "\n\n".join([f"[{i+1}] {d['name']}: {d['description']} (tags: {', '.join(d['tags'])})" for i, d in enumerate(docs)])
+    # 若未命中，直接返回提示，避免空回答
+    if not docs:
+        return {"answer": "未在知识库中找到相关实验设备，请尝试使用其他描述或先添加设备信息。", "sources": []}
+
+    # 2) 组织上下文并调用 LLM（强化输出要求，确保列出设备）
+    context = "\n\n".join([
+        f"[{i+1}] 名称: {d['name']}\n描述: {d['description']}\n标签: {', '.join(d['tags'])}"
+        for i, d in enumerate(docs)
+    ])
+
+    system = (
+        "你是实验设备共享平台的助手。严格遵循以下要求：\n"
+        "1) 仅依据提供的设备资料回答，不要编造。\n"
+        "2) 回答先给出简短结论（不超过两句话）。\n"
+        "3) 必须包含一个《推荐设备》列表，逐条列出命中的设备：`- [编号] 设备名：1句理由`。\n"
+        "4) 在答案末尾给出引用编号，如 [1][2]，对应上方列表的编号。"
+    )
+
     prompt = (
-        "你是一个实验设备共享平台的智能助手。根据给定的设备资料回答用户问题。"
-        "\n\n已知设备信息:\n" + context + "\n\n问题: " + query + "\n请基于资料作答，并在结尾给出引用编号如 [1][2]。"
+        "已知设备资料如下：\n" + context + "\n\n"
+        + "用户问题：" + query + "\n"
+        + "请按系统要求生成答案。"
     )
 
     llm = OllamaClient()
     try:
-        answer = await llm.generate(prompt)
+        answer = await llm.generate(prompt, system=system)
         await llm.aclose()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM failed: {e}")
 
-    return {"answer": answer, "sources": docs}
+    return {"answer": answer, "sources": docs, "recommendations": docs}
+
+
+@router.post("/reindex", response_model=dict)
+async def reindex_all() -> dict:
+    """重建全部设备的向量（当更换嵌入模型或早期条目写入异常时使用）。"""
+    emb = EmbeddingsClient()
+    async def _embed(text: str):
+        vec = await emb.embed(text)
+        return vec
+
+    store = RagStore()
+    try:
+        count = await store.reindex_async(_embed)
+    finally:
+        await emb.aclose()
+    return {"reindexed": count}
 
 
 @router.get("/list", response_model=dict)
