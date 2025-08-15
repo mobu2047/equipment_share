@@ -9,13 +9,7 @@ RAG 路由
 
 import os
 from pathlib import Path
-import sys
 from typing import List, Optional
-
-# 允许在直接运行单文件或非常规入口下解析 package 导入
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
@@ -23,7 +17,7 @@ from backend.core.config import get_settings
 from backend.core.logger import logger
 from backend.models.schemas import RecommendResponse, EquipmentItem
 from backend.services.embeddings_client import EmbeddingsClient
-from backend.services.rag_store import RagStore
+from backend.services.rag_store_faiss import RagStoreFaiss
 from backend.services.ollama_client import OllamaClient
 
 
@@ -65,7 +59,7 @@ async def upsert_equipment(
     tag_list: List[str] = [t.strip() for t in (tags or "").split(",") if t.strip()]
 
     # 3) 写入向量库
-    store = RagStore()
+    store = RagStoreFaiss()
     item_id = store.upsert(name=name, description=description, tags=tag_list, image_url=image_url, vector=vector)
     logger.info("rag.upsert.ok", extra={"event": "rag_upsert_ok", "id": item_id})
     return {"id": item_id}
@@ -82,7 +76,7 @@ async def search_equipment(query: str, top_k: int = 3) -> RecommendResponse:
         logger.error("rag.search.embed_error", extra={"event": "rag_search_embed_error"})
         raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
 
-    store = RagStore()
+    store = RagStoreFaiss()
     items = store.search(query_vector=qvec, top_k=top_k, query_text=query)
     return RecommendResponse(items=[EquipmentItem(**it) for it in items])
 
@@ -97,7 +91,7 @@ async def ask_with_context(query: str, top_k: int = 3) -> dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
 
-    store = RagStore()
+    store = RagStoreFaiss()
     docs = store.search(query_vector=qvec, top_k=top_k, query_text=query)
 
     # 若未命中，直接返回提示，避免空回答
@@ -142,7 +136,7 @@ async def reindex_all() -> dict:
         vec = await emb.embed(text)
         return vec
 
-    store = RagStore()
+    store = RagStoreFaiss()
     try:
         count = await store.reindex_async(_embed)
     finally:
@@ -153,7 +147,7 @@ async def reindex_all() -> dict:
 @router.get("/list", response_model=dict)
 async def list_all() -> dict:
     """列出所有设备条目。"""
-    store = RagStore()
+    store = RagStoreFaiss()
     items = store.list_items()
     return {"items": items}
 
@@ -161,7 +155,7 @@ async def list_all() -> dict:
 @router.delete("/delete/{item_id}", response_model=dict)
 async def delete_item(item_id: str) -> dict:
     """按 id 删除设备条目。"""
-    store = RagStore()
+    store = RagStoreFaiss()
     ok = store.delete(item_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Item not found")
