@@ -5,7 +5,7 @@ Pydantic 请求/响应模型
 - 明确 API 边界，提供类型校验与自动文档
 """
 
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -29,6 +29,8 @@ class EquipmentItem(BaseModel):
     tags: List[str]
     image_url: str
     score: float
+    distance: Optional[float] = Field(None, description="距离用户的距离(km)")
+    location: Optional[Dict[str, Any]] = Field(None, description="设备位置信息")
 
 
 class RecommendResponse(BaseModel):

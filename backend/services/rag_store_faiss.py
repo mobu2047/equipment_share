@@ -35,6 +35,8 @@ class RagItem:
     text: str
     # 不再在 JSON 中持久化向量，仅由 FAISS 索引保存
     faiss_id: int
+    # 位置信息
+    location: Optional[Dict[str, Any]] = None
 
 
 class RagStoreFaiss:
@@ -89,6 +91,8 @@ class RagStoreFaiss:
                             faiss_id = uuid.UUID(item_id).int % (2**63 - 1)
                         except Exception:
                             faiss_id = abs(hash(item_id)) % (2**63 - 1)
+                    # 加载位置信息
+                    location = it.get("location")
                     item = RagItem(
                         id=item_id,
                         name=name,
@@ -97,6 +101,7 @@ class RagStoreFaiss:
                         image_url=image_url,
                         text=text,
                         faiss_id=faiss_id,
+                        location=location,
                     )
                     loaded.append(item)
                 except Exception:
@@ -284,47 +289,31 @@ class RagStoreFaiss:
             }
             
             # 添加位置信息和距离计算
-            if hasattr(item, 'location') and item.location:
-                # 从JSON加载的数据，location作为字典属性
-                location_data = getattr(item, 'location', None)
-                if not location_data:
-                    # 尝试从内存数据中查找location
-                    for mem_item in self._items:
-                        if mem_item.id == item.id:
-                            # 检查是否有location属性（从JSON加载的额外数据）
-                            raw_data = self._get_raw_item_data(item.id)
-                            if raw_data and 'location' in raw_data:
-                                location_data = raw_data['location']
-                            break
+            if item.location and user_location:
+                device_lat = item.location.get('lat', 0)
+                device_lng = item.location.get('lng', 0)
+                user_lat = user_location.get('lat', 0)
+                user_lng = user_location.get('lng', 0)
                 
-                if location_data and user_location:
-                    device_lat = location_data.get('lat', 0)
-                    device_lng = location_data.get('lng', 0)
-                    user_lat = user_location.get('lat', 0)
-                    user_lng = user_location.get('lng', 0)
+                distance = self.calculate_distance(user_lat, user_lng, device_lat, device_lng)
+                
+                # 距离过滤
+                if distance <= max_distance:
+                    # 距离权重 (距离越近权重越高)
+                    distance_weight = max(0, 1 - distance / max_distance)
                     
-                    distance = self.calculate_distance(user_lat, user_lng, device_lat, device_lng)
+                    # 综合得分: 70%内容相关性 + 30%距离便利性
+                    final_score = 0.7 * content_score + 0.3 * distance_weight
                     
-                    # 距离过滤
-                    if distance <= max_distance:
-                        # 距离权重 (距离越近权重越高)
-                        distance_weight = max(0, 1 - distance / max_distance)
-                        
-                        # 综合得分: 70%内容相关性 + 30%距离便利性
-                        final_score = 0.7 * content_score + 0.3 * distance_weight
-                        
-                        result_item.update({
-                            "score": final_score,
-                            "distance": round(distance, 2),
-                            "location": location_data,
-                            "distance_weight": distance_weight
-                        })
-                        results.append(result_item)
-                else:
-                    # 没有位置信息的设备
+                    result_item.update({
+                        "score": final_score,
+                        "distance": round(distance, 2),
+                        "location": item.location,
+                        "distance_weight": distance_weight
+                    })
                     results.append(result_item)
             else:
-                # 没有位置信息的设备
+                # 没有位置信息的设备，或用户未提供位置
                 results.append(result_item)
 
         # 按最终得分重新排序，确保返回顺序正确
