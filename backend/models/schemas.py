@@ -5,7 +5,7 @@ Pydantic 请求/响应模型
 - 明确 API 边界，提供类型校验与自动文档
 """
 
-from typing import List
+from typing import List, Optional, Dict
 from pydantic import BaseModel, Field
 
 
@@ -19,6 +19,8 @@ class ChatResponse(BaseModel):
 
 class RecommendRequest(BaseModel):
     experiment: str = Field(..., description="实验描述")
+    user_location: Optional[Dict[str, float]] = Field(None, description="用户位置 {lat: float, lng: float}")
+    max_distance: Optional[float] = Field(50.0, description="最大搜索距离(km)")
 
 
 class EquipmentItem(BaseModel):

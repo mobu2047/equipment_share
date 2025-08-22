@@ -153,6 +153,19 @@ class RagStoreFaiss:
             self._index = faiss.IndexIDMap2(base)
 
     @staticmethod
+    def calculate_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+        """计算两点间距离(km) - Haversine公式"""
+        import math
+        R = 6371  # 地球半径(km)
+        dlat = math.radians(lat2 - lat1)
+        dlng = math.radians(lng2 - lng1)
+        a = (math.sin(dlat/2) ** 2 + 
+             math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * 
+             math.sin(dlng/2) ** 2)
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c
+
+    @staticmethod
     def _kw_score(query: str, text: str) -> float:
         """简易关键词相似度兜底（Jaccard 近似）。"""
         remove = set(" \t\n\r，。；：、,.!?！?()（）[]【】'\"`|/")
@@ -221,7 +234,8 @@ class RagStoreFaiss:
         self._save_index()
         return item.id
 
-    def search(self, *, query_vector: List[float], top_k: int = 3, query_text: str = "") -> List[Dict[str, Any]]:
+    def search(self, *, query_vector: List[float], top_k: int = 3, query_text: str = "", 
+               user_location: Optional[Dict[str, float]] = None, max_distance: float = 50.0) -> List[Dict[str, Any]]:
         """使用FAISS进行向量检索。"""
         if not self._items or self._index is None or not query_vector:
             return []
@@ -240,28 +254,94 @@ class RagStoreFaiss:
             return []
 
         # 构建结果
-        out = []
+        results = []
         # 建立 faiss_id -> item 映射
         id_map = {it.faiss_id: it for it in self._items}
-        for score, fid in zip(scores, labels):
+        
+        # 获取更多候选项用于地理重排序
+        search_top_k = top_k * 3 if user_location else top_k
+        
+        for i, (score, fid) in enumerate(zip(scores, labels)):
+            if i >= search_top_k:
+                break
             if int(fid) not in id_map:
                 continue
             item = id_map[int(fid)]
+            
             # 结合向量相似度和关键词相似度
             cos01 = (float(score) + 1.0) / 2.0  # FAISS内积 -> 0..1
             kw = self._kw_score(query_text or "", item.text)
-            final_score = 0.75 * cos01 + 0.25 * kw
+            content_score = 0.75 * cos01 + 0.25 * kw
             
-            out.append({
+            result_item = {
                 "id": item.id,
                 "name": item.name,
                 "description": item.description,
                 "tags": item.tags,
                 "image_url": item.image_url,
-                "score": final_score,
-            })
+                "score": content_score,
+                "content_score": content_score,
+            }
+            
+            # 添加位置信息和距离计算
+            if hasattr(item, 'location') and item.location:
+                # 从JSON加载的数据，location作为字典属性
+                location_data = getattr(item, 'location', None)
+                if not location_data:
+                    # 尝试从内存数据中查找location
+                    for mem_item in self._items:
+                        if mem_item.id == item.id:
+                            # 检查是否有location属性（从JSON加载的额外数据）
+                            raw_data = self._get_raw_item_data(item.id)
+                            if raw_data and 'location' in raw_data:
+                                location_data = raw_data['location']
+                            break
+                
+                if location_data and user_location:
+                    device_lat = location_data.get('lat', 0)
+                    device_lng = location_data.get('lng', 0)
+                    user_lat = user_location.get('lat', 0)
+                    user_lng = user_location.get('lng', 0)
+                    
+                    distance = self.calculate_distance(user_lat, user_lng, device_lat, device_lng)
+                    
+                    # 距离过滤
+                    if distance <= max_distance:
+                        # 距离权重 (距离越近权重越高)
+                        distance_weight = max(0, 1 - distance / max_distance)
+                        
+                        # 综合得分: 70%内容相关性 + 30%距离便利性
+                        final_score = 0.7 * content_score + 0.3 * distance_weight
+                        
+                        result_item.update({
+                            "score": final_score,
+                            "distance": round(distance, 2),
+                            "location": location_data,
+                            "distance_weight": distance_weight
+                        })
+                        results.append(result_item)
+                else:
+                    # 没有位置信息的设备
+                    results.append(result_item)
+            else:
+                # 没有位置信息的设备
+                results.append(result_item)
 
-        return out
+        # 按最终得分重新排序，确保返回顺序正确
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:top_k]
+    
+    def _get_raw_item_data(self, item_id: str) -> Optional[Dict]:
+        """获取原始JSON数据中的条目信息"""
+        try:
+            with self._store_file.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+            for item in raw.get("items", []):
+                if item.get("id") == item_id:
+                    return item
+        except Exception:
+            pass
+        return None
 
     def list_items(self) -> List[Dict[str, Any]]:
         """返回所有条目信息（不包含向量）。"""
