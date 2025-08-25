@@ -9,10 +9,13 @@ FastAPI 入口
 from pathlib import Path
 import sys
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from starlette.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+import traceback
+import uuid
 
 # 允许直接运行此文件：将项目根目录加入 sys.path，确保 `backend.*` 可被解析
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +26,7 @@ from backend.core.config import get_settings
 from backend.core.logger import logger
 from backend.routers.chat import router as chat_router
 from backend.routers.equipment import router as equipment_router
-from backend.routers.rag import router as rag_router
+from backend.api import router as rag_router
 
 
 def create_app() -> FastAPI:
@@ -59,6 +62,21 @@ def create_app() -> FastAPI:
         settings = get_settings()
         (Path(settings.data_dir)).mkdir(parents=True, exist_ok=True)
         (Path(settings.uploads_dir)).mkdir(parents=True, exist_ok=True)
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception):
+        err_id = str(uuid.uuid4())[:8]
+        logger.error(
+            "unhandled_exception",
+            extra={
+                "event": "unhandled_exception",
+                "error_id": err_id,
+                "path": str(request.url),
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            },
+        )
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error", "error_id": err_id, "error": str(exc)})
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
