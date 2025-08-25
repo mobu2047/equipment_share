@@ -634,14 +634,17 @@ def run_import(file: str, api: str = "http://localhost:8000", ak: Any = None, sh
 
 # run_import_example.py
 def main() -> None:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 拼接到 data 目录
+    file_path = os.path.join(base_dir, "..", "data", "device_data.xlsx")
 
     result = run_import(
-        file="C:/Users/tiany/Desktop/equipment_share/data/设备数据(2).xlsx",      # Excel 路径
+        file= file_path,      # Excel 路径
         api="http://localhost:8000",       # 你的后端地址
         sheet=0,                            # sheet 名称或索引
     )
     print(result)  # {'ok': X, 'fail': Y}
 if __name__ == "__main__":
     main()
-
 

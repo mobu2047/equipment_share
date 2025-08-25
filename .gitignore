@@ -8,6 +8,8 @@ __pycache__/
 *.py[cod]
 
 # 安装包和分发目录
-data
+data/*
+data/rag_store_faiss.json
+!data/.gitkeep
 static/uploads
 backend/__pycache__
