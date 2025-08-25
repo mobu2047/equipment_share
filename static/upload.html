@@ -63,6 +63,14 @@
                 <input id="tags" name="tags" type="text" placeholder="sem,microscopy,materials" />
             </div>
             <div class="row">
+                <label for="address">地址（用于经纬度转换）</label>
+                <input id="address" name="address" type="text" placeholder="北京市海淀区中关村..." />
+            </div>
+            <div class="row">
+                <label for="quantity">台数</label>
+                <input id="quantity" name="quantity" type="number" min="0" step="1" placeholder="1" />
+            </div>
+            <div class="row">
                 <label for="image">图片</label>
                 <input id="image" name="image" type="file" accept="image/*" />
                 <div class="hint">支持常见图片格式，大小请适度。</div>
@@ -102,13 +110,16 @@
             submitBtn.disabled = true;
             try {
                 const fd = new FormData(form);
+                // 规范化 tags：小写并去除两侧空格
+                const tagsInput = (document.getElementById('tags').value || '').trim().toLowerCase();
+                fd.set('tags', tagsInput);
                 const resp = await fetch('/api/rag/upsert', {
                     method: 'POST',
                     body: fd,
                 });
                 if (!resp.ok) throw new Error(await resp.text());
                 const data = await resp.json();
-                msg.textContent = '已保存，ID: ' + (data.id || '');
+                msg.textContent = '已保存，ID: ' + (data.id || data?.id || '');
             } catch (e) {
                 msg.textContent = '提交失败：' + (e && e.message ? e.message : '未知错误');
             } finally {

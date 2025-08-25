@@ -1,0 +1,13 @@
+# 虚拟环境目录
+venv/
+env/
+.venv/
+
+# 字节码缓存文件
+__pycache__/
+*.py[cod]
+
+# 安装包和分发目录
+data
+static/uploads
+backend/__pycache__

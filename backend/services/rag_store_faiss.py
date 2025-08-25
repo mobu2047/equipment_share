@@ -35,7 +35,13 @@ class RagItem:
     text: str
     # 不再在 JSON 中持久化向量，仅由 FAISS 索引保存
     faiss_id: int
-    # 位置信息
+    # 扩展字段
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
+    quantity: Optional[int] = None
+    # 兼容原先的位置信息
     location: Optional[Dict[str, Any]] = None
 
 
@@ -91,8 +97,20 @@ class RagStoreFaiss:
                             faiss_id = uuid.UUID(item_id).int % (2**63 - 1)
                         except Exception:
                             faiss_id = abs(hash(item_id)) % (2**63 - 1)
-                    # 加载位置信息
+                    # 加载位置信息与扩展字段
+                    address = it.get("address")
+                    lat = it.get("lat")
+                    lng = it.get("lng")
+                    metadata = it.get("metadata") if isinstance(it.get("metadata"), dict) else None
+                    quantity = it.get("quantity") if isinstance(it.get("quantity"), int) else None
                     location = it.get("location")
+                    # 若只有旧的 location，尝试拆出 lat/lng
+                    if location and (lat is None or lng is None):
+                        try:
+                            lat = location.get('lat')
+                            lng = location.get('lng')
+                        except Exception:
+                            pass
                     item = RagItem(
                         id=item_id,
                         name=name,
@@ -101,6 +119,11 @@ class RagStoreFaiss:
                         image_url=image_url,
                         text=text,
                         faiss_id=faiss_id,
+                        address=address,
+                        lat=lat,
+                        lng=lng,
+                        metadata=metadata,
+                        quantity=quantity,
                         location=location,
                     )
                     loaded.append(item)
@@ -182,7 +205,9 @@ class RagStoreFaiss:
         union = len(qa | ta) or 1
         return inter / union
 
-    def upsert(self, *, name: str, description: str, tags: List[str], image_url: str, vector: List[float]) -> str:
+    def upsert(self, *, name: str, description: str, tags: List[str], image_url: str, vector: List[float],
+               address: Optional[str] = None, lat: Optional[float] = None, lng: Optional[float] = None,
+               metadata: Optional[Dict[str, Any]] = None, quantity: Optional[int] = None) -> str:
         """新增或更新条目：用 name+tags 作为简易键去重，如重名则覆盖。"""
         key = (name.strip().lower(), tuple(sorted(t.strip().lower() for t in tags)))
         text = f"{name}\n{description}\nTags: {', '.join(tags)}"
@@ -207,6 +232,12 @@ class RagStoreFaiss:
             image_url=image_url,
             text=text,
             faiss_id=faiss_id,
+            address=address,
+            lat=lat,
+            lng=lng,
+            metadata=metadata,
+            quantity=quantity,
+            location={"lat": lat, "lng": lng} if (lat is not None and lng is not None) else None,
         )
 
         if existing_idx >= 0:
@@ -284,6 +315,11 @@ class RagStoreFaiss:
                 "description": item.description,
                 "tags": item.tags,
                 "image_url": item.image_url,
+                "address": item.address,
+                "lat": item.lat,
+                "lng": item.lng,
+                "metadata": item.metadata,
+                "quantity": item.quantity,
                 "score": content_score,
                 "content_score": content_score,
             }
@@ -341,6 +377,11 @@ class RagStoreFaiss:
                 "description": it.description,
                 "tags": it.tags,
                 "image_url": it.image_url,
+                "address": it.address,
+                "lat": it.lat,
+                "lng": it.lng,
+                "metadata": it.metadata,
+                "quantity": it.quantity,
             }
             for it in self._items
         ]
@@ -401,3 +442,61 @@ class RagStoreFaiss:
             self._save_index()
 
         return updated
+
+    def get_item(self, item_id: str) -> Optional[Dict[str, Any]]:
+        for it in self._items:
+            if it.id == item_id:
+                return {
+                    "id": it.id,
+                    "name": it.name,
+                    "description": it.description,
+                    "tags": it.tags,
+                    "image_url": it.image_url,
+                    "address": it.address,
+                    "lat": it.lat,
+                    "lng": it.lng,
+                    "metadata": it.metadata,
+                    "quantity": it.quantity,
+                }
+        return None
+
+    def list_items_filtered(self, *, tags: List[str], match: str = "any", q: str = "",
+                             page: int = 1, size: int = 20) -> Dict[str, Any]:
+        page = max(1, page)
+        size = max(1, min(200, size))
+
+        norm_tags = [t.strip().lower() for t in tags if t and t.strip()]
+
+        def match_tags(item: RagItem) -> bool:
+            if not norm_tags:
+                return True
+            item_tags = {t.strip().lower() for t in item.tags}
+            if match == "all":
+                return all(t in item_tags for t in norm_tags)
+            return any(t in item_tags for t in norm_tags)
+
+        items_list: List[Dict[str, Any]] = []
+        for it in self._items:
+            if not match_tags(it):
+                continue
+            if q:
+                hay = f"{it.name}\n{it.description}\n{' '.join(it.tags)}\n{it.address or ''}"
+                if q.lower() not in hay.lower():
+                    continue
+            items_list.append({
+                "id": it.id,
+                "name": it.name,
+                "description": it.description,
+                "tags": it.tags,
+                "image_url": it.image_url,
+                "address": it.address,
+                "lat": it.lat,
+                "lng": it.lng,
+                "metadata": it.metadata,
+                "quantity": it.quantity,
+            })
+
+        total = len(items_list)
+        start = (page - 1) * size
+        end = start + size
+        return {"total": total, "page": page, "size": size, "items": items_list[start:end]}

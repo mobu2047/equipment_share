@@ -16,7 +16,7 @@ import threading
 import uuid
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional, Set
 
 import numpy as np
 
@@ -36,6 +36,12 @@ class RagItem:
     image_url: str
     text: str
     vector: List[float]
+    # 扩展：地址/坐标/附加元信息
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
+    quantity: Optional[int] = None
 
 
 class RagStore:
@@ -50,7 +56,10 @@ class RagStore:
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._store_file = self._data_dir / "rag_store.json"
         self._items: List[RagItem] = []
+        # tags -> set(ids) 倒排索引，加速多标签过滤
+        self._tag_to_ids: Dict[str, Set[str]] = {}
         self._load()
+        self._rebuild_index()
 
     def _load(self) -> None:
         if not self._store_file.exists():
@@ -73,6 +82,10 @@ class RagStore:
                     vector = it.get("vector") or []
                     if not isinstance(vector, list):
                         vector = []
+                    address = it.get("address")
+                    lat = it.get("lat")
+                    lng = it.get("lng")
+                    metadata = it.get("metadata") if isinstance(it.get("metadata"), dict) else None
                     item = RagItem(
                         id=it.get("id") or str(uuid.uuid4()),
                         name=name,
@@ -81,6 +94,10 @@ class RagStore:
                         image_url=image_url,
                         text=text,
                         vector=vector,
+                        address=address,
+                        lat=lat,
+                        lng=lng,
+                        metadata=metadata,
                     )
                     loaded.append(item)
                 except Exception:
@@ -96,6 +113,31 @@ class RagStore:
         with _LOCK, self._store_file.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         logger.info("rag_store.saved", extra={"event": "rag_store_save", "count": len(self._items)})
+        # 保存后重建索引，保证一致
+        self._rebuild_index()
+
+    def _rebuild_index(self) -> None:
+        self._tag_to_ids = {}
+        for it in self._items:
+            for t in it.tags:
+                key = t.strip().lower()
+                if not key:
+                    continue
+                self._tag_to_ids.setdefault(key, set()).add(it.id)
+
+    def _index_item(self, item: RagItem) -> None:
+        for t in item.tags:
+            key = t.strip().lower()
+            if not key:
+                continue
+            self._tag_to_ids.setdefault(key, set()).add(item.id)
+
+    def _unindex_item(self, item: RagItem) -> None:
+        for t in item.tags:
+            key = t.strip().lower()
+            s = self._tag_to_ids.get(key)
+            if s and item.id in s:
+                s.remove(item.id)
 
     @staticmethod
     def _cosine(a: np.ndarray, b: np.ndarray) -> float:
@@ -115,7 +157,10 @@ class RagStore:
         union = len(qa | ta) or 1
         return inter / union
 
-    def upsert(self, *, name: str, description: str, tags: List[str], image_url: str, vector: List[float]) -> str:
+    def upsert(self, *, name: str, description: str, tags: List[str], image_url: str, vector: List[float],
+               address: Optional[str] = None, lat: Optional[float] = None, lng: Optional[float] = None,
+               metadata: Optional[Dict[str, Any]] = None,
+               quantity: Optional[int] = None) -> str:
         """新增或更新条目：用 name+tags 作为简易键去重，如重名则覆盖。"""
         key = (name.strip().lower(), tuple(sorted(t.strip().lower() for t in tags)))
         text = f"{name}\n{description}\nTags: {', '.join(tags)}"
@@ -135,12 +180,21 @@ class RagStore:
             image_url=image_url,
             text=text,
             vector=vector,
+            address=address,
+            lat=lat,
+            lng=lng,
+            metadata=metadata,
+            quantity=quantity,
         )
 
         if existing_idx >= 0:
+            # 更新索引：先移除旧条目，再加入新条目
+            self._unindex_item(self._items[existing_idx])
             self._items[existing_idx] = item
+            self._index_item(item)
         else:
             self._items.append(item)
+            self._index_item(item)
 
         self._save()
         return item.id
@@ -183,6 +237,10 @@ class RagStore:
                 "description": it.description,
                 "tags": it.tags,
                 "image_url": it.image_url,
+                "address": it.address,
+                "lat": it.lat,
+                "lng": it.lng,
+                "metadata": it.metadata,
             }
             for it in self._items
         ]
@@ -191,6 +249,7 @@ class RagStore:
         """按 id 删除条目，返回是否删除成功。"""
         for idx, it in enumerate(self._items):
             if it.id == item_id:
+                self._unindex_item(it)
                 del self._items[idx]
                 self._save()
                 return True
@@ -213,5 +272,73 @@ class RagStore:
         if updated:
             self._save()
         return updated
+
+    # 读取单条
+    def get_item(self, item_id: str) -> Optional[Dict[str, Any]]:
+        for it in self._items:
+            if it.id == item_id:
+                return {
+                    "id": it.id,
+                    "name": it.name,
+                    "description": it.description,
+                    "tags": it.tags,
+                    "image_url": it.image_url,
+                    "address": it.address,
+                    "lat": it.lat,
+                    "lng": it.lng,
+                    "metadata": it.metadata,
+                }
+        return None
+
+    # 过滤 + 分页
+    def list_items_filtered(self, *, tags: List[str], match: str = "any", q: str = "",
+                             page: int = 1, size: int = 20) -> Dict[str, Any]:
+        page = max(1, page)
+        size = max(1, min(200, size))
+
+        candidate_ids: Optional[Set[str]] = None
+        norm_tags = [t.strip().lower() for t in tags if t and t.strip()]
+        if norm_tags:
+            sets = [self._tag_to_ids.get(t, set()) for t in norm_tags]
+            if match == "all":
+                # 交集
+                if sets:
+                    s = sets[0].copy()
+                    for st in sets[1:]:
+                        s &= st
+                    candidate_ids = s
+            else:
+                # 并集
+                s: Set[str] = set()
+                for st in sets:
+                    s |= st
+                candidate_ids = s
+
+        # 收集并按简单关键词过滤
+        items_list = []
+        for it in self._items:
+            if candidate_ids is not None and it.id not in candidate_ids:
+                continue
+            if q:
+                hay = f"{it.name}\n{it.description}\n{' '.join(it.tags)}\n{it.address or ''}"
+                if q.lower() not in hay.lower():
+                    continue
+            items_list.append({
+                "id": it.id,
+                "name": it.name,
+                "description": it.description,
+                "tags": it.tags,
+                "image_url": it.image_url,
+                "address": it.address,
+                "lat": it.lat,
+                "lng": it.lng,
+                "metadata": it.metadata,
+                "quantity": it.quantity,
+            })
+
+        total = len(items_list)
+        start = (page - 1) * size
+        end = start + size
+        return {"total": total, "page": page, "size": size, "items": items_list[start:end]}
 
 

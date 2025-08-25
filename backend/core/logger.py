@@ -33,11 +33,20 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # 合并 extra 字段
-        for attr in ("extra",):
-            value = getattr(record, attr, None)
-            if isinstance(value, dict):
-                payload.update(value)
+        # 合并通过 logging.extra 注入的自定义字段
+        # 说明：Python logging 会将 extra 的键直接并入 record.__dict__，本格式化器将其挑出合并到 JSON。
+        default_keys = {
+            'name','msg','args','levelname','levelno','pathname','filename','module','exc_info','exc_text',
+            'stack_info','lineno','funcName','created','msecs','relativeCreated','thread','threadName',
+            'processName','process','message','asctime'
+        }
+        for key, value in record.__dict__.items():
+            if key not in default_keys and not key.startswith('_'):
+                try:
+                    payload[key] = value
+                except Exception:
+                    # 某些不可序列化对象直接跳过
+                    continue
 
         # 异常堆栈
         if record.exc_info:

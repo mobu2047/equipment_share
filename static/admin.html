@@ -32,6 +32,8 @@
                     <th>名称</th>
                     <th>描述</th>
                     <th>标签</th>
+                    <th>地址</th>
+                    <th>台数</th>
                     <th>操作</th>
                 </tr>
             </thead>
@@ -64,6 +66,8 @@
                     <td>${it.name || ''}</td>
                     <td><div style="max-width:420px">${it.description || ''}</div></td>
                     <td>${(it.tags || []).join(', ')}</td>
+                    <td>${(it.address || '') + ((typeof it.lat === 'number' && typeof it.lng === 'number') ? ` (${it.lat.toFixed(6)}, ${it.lng.toFixed(6)})` : '')}</td>
+                    <td>${typeof it.quantity === 'number' ? it.quantity : ''}</td>
                     <td><button class="danger" onclick="remove('${it.id}')">删除</button></td>
                 `;
                 tbody.appendChild(tr);

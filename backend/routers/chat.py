@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from backend.models.schemas import ChatRequest, ChatResponse
 from backend.services.ollama_client import OllamaClient
 from backend.services.embeddings_client import EmbeddingsClient
-from backend.services.rag_store import RagStore
+from backend.services.rag_store_faiss import RagStoreFaiss
 from backend.core.logger import logger
 
 
@@ -27,7 +27,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         qvec = await emb.embed(req.prompt)
         await emb.aclose()
 
-        store = RagStore()
+        store = RagStoreFaiss()
         docs = store.search(query_vector=qvec, top_k=3, query_text=req.prompt)
         if docs:
             context = "\n\n".join([
@@ -42,10 +42,15 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 "已知设备资料：\n" + context + "\n\n"
                 + "用户问题：" + req.prompt + "\n请按要求生成答案。"
             )
-            llm = OllamaClient()
-            reply = await llm.generate(prompt, system=system)
-            await llm.aclose()
-            return ChatResponse(reply=reply)
+            try:
+                llm = OllamaClient()
+                reply = await llm.generate(prompt, system=system)
+                await llm.aclose()
+                return ChatResponse(reply=reply)
+            except Exception:
+                # 如果 LLM 调用失败，返回一个包含推荐列表的简要文本，避免 500
+                rec_lines = [f"- [{i+1}] {d['name']}" for i, d in enumerate(docs)]
+                return ChatResponse(reply="推荐设备:\n" + "\n".join(rec_lines))
     except Exception:
         # RAG 失败时静默回退为普通对话
         pass

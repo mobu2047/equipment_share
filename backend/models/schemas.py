@@ -31,9 +31,40 @@ class EquipmentItem(BaseModel):
     score: float
     distance: Optional[float] = Field(None, description="距离用户的距离(km)")
     location: Optional[Dict[str, Any]] = Field(None, description="设备位置信息")
+    # 扩展字段：用于列表/搜索返回完整信息
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
+    quantity: Optional[int] = Field(None, description="台数/数量")
 
 
 class RecommendResponse(BaseModel):
     items: List[EquipmentItem]
+
+
+class UpsertFullRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    tags: List[str] = []
+    image_url: Optional[str] = None
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
+    quantity: Optional[int] = None
+
+
+class ItemResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    tags: List[str]
+    image_url: str
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
+    quantity: Optional[int] = None
 
 

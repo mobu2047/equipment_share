@@ -44,56 +44,55 @@
         replyEl.textContent = '思考中…';
 
         try {
-            // 1) 获取向量检索的设备推荐（用于卡片展示）
-            const requestBody = { experiment: text };
-            if (userLocation) {
-                requestBody.user_location = userLocation;
-                requestBody.max_distance = 50; // 50km搜索半径
-            }
-            
-            const recommendResp = await fetch('/api/recommend', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody)
-            });
-            if (!recommendResp.ok) throw new Error(await recommendResp.text());
-            const recommendData = await recommendResp.json();
-            const items = (recommendData && recommendData.items) || [];
+            // 强制优先使用 RAG 问答
+            const ragResp = await fetch('/api/rag/ask?query=' + encodeURIComponent(text) + '&top_k=3', { method: 'POST' });
+            if (!ragResp.ok) throw new Error(await ragResp.text());
+            const rag = await ragResp.json();
 
-            // 2) 获取 RAG 问答（基于检索结果生成回答）
-            let answerText = '';
-            if (items.length > 0) {
+            // 1) 展示答案
+            let answerText = rag.answer || '';
+
+            // 2) 设备列表（优先用 ask 的 recommendations/sources）
+            let items = (rag && (rag.recommendations || rag.sources)) || [];
+
+            // 如 RAG 未返回设备，则回退一次简单推荐以填充卡片
+            if (!items.length) {
                 try {
-                    const ragResp = await fetch('/api/rag/ask?query=' + encodeURIComponent(text) + '&top_k=3', { method: 'POST' });
-                    if (ragResp.ok) {
-                        const rag = await ragResp.json();
-                        answerText = rag.answer || '';
+                    const recommendResp = await fetch('/api/recommend', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ experiment: text })
+                    });
+                    if (recommendResp.ok) {
+                        const recommendData = await recommendResp.json();
+                        items = (recommendData && recommendData.items) || [];
                     }
                 } catch (_) { /* ignore */ }
             }
 
-            // 3) 在回答下方追加设备详情
+            // 3) 在答案下方追加设备详情
             if (items.length) {
                 const lines = ['','设备详情：'];
                 for (let i = 0; i < items.length; i++) {
                     const it = items[i];
                     let itemInfo = `- [${i + 1}] 名称: ${it.name}`;
-                    if (it.distance !== undefined) {
-                        itemInfo += ` | 距离: ${it.distance}km`;
+                    if (typeof it.lat === 'number' && typeof it.lng === 'number') {
+                        itemInfo += ` (${it.lat.toFixed(6)}, ${it.lng.toFixed(6)})`;
                     }
-                    if (it.location && it.location.company) {
-                        itemInfo += ` | 单位: ${it.location.company}`;
+                    if (it.address) {
+                        itemInfo += ` | 地址: ${it.address}`;
                     }
-                    itemInfo += ` | 标签: ${(it.tags || []).join(', ')}`;
+                    if (it.tags && it.tags.length) {
+                        itemInfo += ` | 标签: ${it.tags.join(', ')}`;
+                    }
                     lines.push(itemInfo);
                 }
                 answerText = (answerText ? answerText + '\n\n' : '') + lines.join('\n');
             }
 
-            // 4) 显示回答
             replyEl.textContent = answerText || '未找到相关设备推荐';
 
-            // 5) 更新卡片（使用向量检索的排序结果）
+            // 4) 更新卡片
             for (let i = 0; i < cards.length; i++) {
                 const card = cards[i];
                 const item = items[i];
@@ -101,22 +100,16 @@
                 const title = card.querySelector('.card-title');
                 const desc = card.querySelector('.card-desc');
                 if (item) {
-                    // 如果后端提供图片，优先展示
                     if (item.image_url) {
-                        // 加时间戳避免缓存
                         img.src = item.image_url + (item.image_url.includes('?') ? '&' : '?') + 't=' + Date.now();
                     }
                     title.textContent = item.name || `设备位 ${i + 1}`;
                     let descText = item.description || '';
-                    if (item.distance !== undefined) {
-                        descText += `\n📍 距离: ${item.distance}km`;
+                    if (item.address) descText += `\n📍 ${item.address}`;
+                    if (typeof item.lat === 'number' && typeof item.lng === 'number') {
+                        descText += ` (${item.lat.toFixed(6)}, ${item.lng.toFixed(6)})`;
                     }
-                    if (item.location && item.location.company) {
-                        descText += `\n🏢 ${item.location.company}`;
-                    }
-                    if (item.tags) {
-                        descText += ` [${item.tags.join(', ')}]`;
-                    }
+                    if (item.tags) descText += ` [${item.tags.join(', ')}]`;
                     desc.textContent = descText;
                 } else {
                     title.textContent = `设备位 ${i + 1}`;
