@@ -76,6 +76,9 @@
                 for (let i = 0; i < items.length; i++) {
                     const it = items[i];
                     let itemInfo = `- [${i + 1}] 名称: ${it.name}`;
+                    if (typeof it.quantity === 'number') {
+                        itemInfo += ` | 台数: ${it.quantity}`;
+                    }
                     if (typeof it.lat === 'number' && typeof it.lng === 'number') {
                         itemInfo += ` (${it.lat.toFixed(6)}, ${it.lng.toFixed(6)})`;
                     }
@@ -105,6 +108,7 @@
                     }
                     title.textContent = item.name || `设备位 ${i + 1}`;
                     let descText = item.description || '';
+                    if (typeof item.quantity === 'number') descText += `\n🧰 台数: ${item.quantity}`;
                     if (item.address) descText += `\n📍 ${item.address}`;
                     if (typeof item.lat === 'number' && typeof item.lng === 'number') {
                         descText += ` (${item.lat.toFixed(6)}, ${item.lng.toFixed(6)})`;

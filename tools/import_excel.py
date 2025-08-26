@@ -22,6 +22,7 @@ import hashlib
 import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import re  # 提升“台数/数量”解析的鲁棒性：支持如“3台”“3.0”等格式
 import json
 import traceback
 import asyncio
@@ -208,6 +209,70 @@ def geocode_sync(address: str, ak: Any) -> Dict[str, Optional[float]]:
         return asyncio.run(geocode_address(address, credentials=cred_list or None))
     except Exception:
         return {"lat": None, "lng": None}
+
+
+def _extract_int_quantity(value: Any) -> Optional[int]:
+    """从多种可能的输入中提取整数台数。
+
+    设计考量：
+    - Excel 中常见格式：“3”“ 3 ”、“3台”、“3.0”、“约3台”；
+    - 若为浮点字符串，取其整数部分；
+    - 若存在多个数字，取第一个；
+    - 中文小写数字（如“二台”）暂不处理，避免过度猜测。
+    """
+    try:
+        s = str(value).strip()
+    except Exception:
+        return None
+    if not s:
+        return None
+    # 直接是纯数字
+    if s.isdigit():
+        try:
+            return int(s)
+        except Exception:
+            return None
+    # 提取第一个数字（支持小数）
+    m = re.search(r"\d+(?:[\.,]\d+)?", s)
+    if not m:
+        return None
+    num_str = m.group(0).replace(",", ".")
+    try:
+        # 统一转 float 再取整，兼容 "3.0"
+        return int(float(num_str))
+    except Exception:
+        return None
+
+
+def _get_quantity_from_row(row: Dict[str, Any]) -> Optional[int]:
+    """尽可能从一行中解析出台数。
+
+    覆盖常见列名：
+    - 台数、台 数、数量、数量(台)、数量（台）、台数(台)、台数（台）、设备台数、库存
+    同时提供降级：扫描所有列名，去空格/括号后若包含“台数”或等于“数量”，尝试解析。
+    """
+    preferred_keys = [
+        "台数", "台 数", "数量", "数量(台)", "数量（台）", "台数(台)", "台数（台）", "设备台数", "库存",
+    ]
+    for key in preferred_keys:
+        if key in row:
+            q = _extract_int_quantity(row.get(key))
+            if q is not None:
+                return q
+    # 退化：扫描所有列，容忍空格与中英文括号、全角
+    trans_table = str.maketrans({
+        " ": "", "\t": "", "（": "(", "）": ")", "【": "[", "】": "]",
+    })
+    for k in row.keys():
+        try:
+            norm = str(k).translate(trans_table)
+        except Exception:
+            continue
+        if "台数" in norm or norm == "数量" or norm.startswith("数量("):
+            q = _extract_int_quantity(row.get(k))
+            if q is not None:
+                return q
+    return None
 
 
 def run_import(file: str, api: str = "http://localhost:8000", ak: Any = None, sheet: Any = 0,
@@ -526,9 +591,41 @@ def run_import(file: str, api: str = "http://localhost:8000", ak: Any = None, sh
         else:
             last_col_name = list(row.keys())[-1]
             img_val = str(row.get(last_col_name) or "")
+        # 在决定保存图片前先做“重复检测”：避免无意义地写入重复图像
+        # 使用后端专用接口 /api/rag/check_duplicate，不触发入库/向量生成
+        try:
+            chk_payload = {
+                "name": name,
+                "parameters": row.get("参数", ""),
+                "test_items": row.get("测试项目", ""),
+                "unit_name": row.get("单位名称", "") or row.get("单位", ""),
+                "address": address,
+            }
+            chk = requests.post(f"{api}/api/rag/check_duplicate", json=chk_payload, timeout=15)
+            if chk.ok:
+                chk_json = chk.json()
+                if isinstance(chk_json, dict) and chk_json.get("duplicate") is True:
+                    ok += 1
+                    with open(manifest_path, "a", encoding="utf-8") as mf:
+                        mf.write(json.dumps({
+                            "row": int(idx),
+                            "row_key": _row_key_from_mapping(row),
+                            "name": name,
+                            "image_url": "",
+                            "address": address,
+                            "lat": loc["lat"],
+                            "lng": loc["lng"],
+                            "tags": tags,
+                            "dup": True,
+                        }, ensure_ascii=False) + "\n")
+                    continue
+        except Exception:
+            # 查重失败时继续正常流程，不影响入库
+            pass
+
         image_url = save_image(img_val, uploads_dir, base_dir=excel_dir)
         if not image_url:
-            # 使用形状/公式提取的图片（行号映射），并做校准校验
+            # 使用形状/公式提取的图片（行号映射），并做校准校验 
             image_url = embedded_map.get(int(idx), "")
             if image_url:
                 # 行锚点核对：如果图片上方/下方 2 行内存在同名单位更匹配，则迁移归属
@@ -561,12 +658,8 @@ def run_import(file: str, api: str = "http://localhost:8000", ak: Any = None, sh
             "原始地址": address,
         }
 
-        # 新增台数字段：优先列名“台数/数量”，整型化
-        qty_raw = row.get("台数") or row.get("数量") or ""
-        try:
-            quantity = int(str(qty_raw).strip()) if str(qty_raw).strip() else None
-        except Exception:
-            quantity = None
+        # 新增台数字段：更鲁棒的解析（支持“3台”“3.0”“数量（台）”等列/格式）
+        quantity = _get_quantity_from_row(row)
 
         payload = {
             "name": name,
@@ -637,7 +730,7 @@ def main() -> None:
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # 拼接到 data 目录
-    file_path = os.path.join(base_dir, "..", "data", "device_data.xlsx")
+    file_path = os.path.join(base_dir, "..", "data", "工作簿1.xlsx")
 
     result = run_import(
         file= file_path,      # Excel 路径

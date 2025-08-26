@@ -97,20 +97,16 @@ class RagStoreFaiss:
                             faiss_id = uuid.UUID(item_id).int % (2**63 - 1)
                         except Exception:
                             faiss_id = abs(hash(item_id)) % (2**63 - 1)
-                    # 加载位置信息与扩展字段
+                    # 加载位置信息与扩展字段（新规范：仅持久化 location）
                     address = it.get("address")
                     lat = it.get("lat")
                     lng = it.get("lng")
                     metadata = it.get("metadata") if isinstance(it.get("metadata"), dict) else None
                     quantity = it.get("quantity") if isinstance(it.get("quantity"), int) else None
                     location = it.get("location")
-                    # 若只有旧的 location，尝试拆出 lat/lng
-                    if location and (lat is None or lng is None):
-                        try:
-                            lat = location.get('lat')
-                            lng = location.get('lng')
-                        except Exception:
-                            pass
+                    # 兼容旧数据：如仅有顶层 lat/lng，则构造 location
+                    if (not location) and (lat is not None or lng is not None):
+                        location = {"lat": lat, "lng": lng}
                     item = RagItem(
                         id=item_id,
                         name=name,
@@ -120,8 +116,8 @@ class RagStoreFaiss:
                         text=text,
                         faiss_id=faiss_id,
                         address=address,
-                        lat=lat,
-                        lng=lng,
+                        lat=(location.get('lat') if isinstance(location, dict) else None),
+                        lng=(location.get('lng') if isinstance(location, dict) else None),
                         metadata=metadata,
                         quantity=quantity,
                         location=location,
@@ -132,6 +128,14 @@ class RagStoreFaiss:
                     continue
             self._items = loaded
             logger.info("rag_store_faiss.loaded", extra={"event": "rag_store_faiss_load", "count": len(self._items)})
+            # 迁移：若条目缺少 location 但存在顶层 lat/lng，则补齐 location 并落盘一次
+            changed = False
+            for it in self._items:
+                if (not it.location) and (it.lat is not None or it.lng is not None):
+                    it.location = {"lat": it.lat, "lng": it.lng}
+                    changed = True
+            if changed:
+                self._save()
         except Exception:
             logger.error("rag_store_faiss.load_failed", extra={"event": "rag_store_faiss_load_error"})
 
@@ -160,6 +164,11 @@ class RagStoreFaiss:
             obj = asdict(it)
             # 确保没有 vector 字段（向后兼容防护）
             obj.pop("vector", None)
+            # 新规范：仅持久化 location；清理顶层 lat/lng
+            if "lat" in obj:
+                obj.pop("lat", None)
+            if "lng" in obj:
+                obj.pop("lng", None)
             payload_items.append(obj)
         payload = {"items": payload_items}
         with _LOCK, self._store_file.open("w", encoding="utf-8") as f:
@@ -316,8 +325,9 @@ class RagStoreFaiss:
                 "tags": item.tags,
                 "image_url": item.image_url,
                 "address": item.address,
-                "lat": item.lat,
-                "lng": item.lng,
+                # 对外输出统一保持顶层 lat/lng（从 location 映射出），兼容前端
+                "lat": (item.location.get('lat') if item.location else None),
+                "lng": (item.location.get('lng') if item.location else None),
                 "metadata": item.metadata,
                 "quantity": item.quantity,
                 "score": content_score,
@@ -325,9 +335,10 @@ class RagStoreFaiss:
             }
             
             # 添加位置信息和距离计算
-            if item.location and user_location:
-                device_lat = item.location.get('lat', 0)
-                device_lng = item.location.get('lng', 0)
+            # 优先使用顶层 lat/lng；若缺失则回退到 location 字段
+            device_lat = (item.location.get('lat') if item.location else None)
+            device_lng = (item.location.get('lng') if item.location else None)
+            if user_location and device_lat is not None and device_lng is not None:
                 user_lat = user_location.get('lat', 0)
                 user_lng = user_location.get('lng', 0)
                 
@@ -344,7 +355,8 @@ class RagStoreFaiss:
                     result_item.update({
                         "score": final_score,
                         "distance": round(distance, 2),
-                        "location": item.location,
+                        # 继续返回 location 字段用于兼容，但使用计算时的 lat/lng 组装
+                        "location": {"lat": device_lat, "lng": device_lng},
                         "distance_weight": distance_weight
                     })
                     results.append(result_item)
@@ -355,6 +367,64 @@ class RagStoreFaiss:
         # 按最终得分重新排序，确保返回顺序正确
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:top_k]
+
+    # ---------------------- 查重支持 ----------------------
+    @staticmethod
+    def _norm(s: Optional[str]) -> str:
+        """统一规范化：小写、去两侧空白、压缩空白、去除常见标点差异。
+
+        目的：提高重复判断的匹配稳定性。
+        """
+        if s is None:
+            return ""
+        x = str(s).strip().lower()
+        # 统一全角括号等
+        x = x.replace("（", "(").replace("）", ")").replace("【", "[").replace("】", "]")
+        # 压缩连续空白
+        x = " ".join(x.split())
+        return x
+
+    def find_duplicate(self, *, name: Optional[str], parameters: Optional[str], test_items: Optional[str],
+                        unit_name: Optional[str], address: Optional[str]) -> Optional[Dict[str, Any]]:
+        """按字段精确查重：设备名称 + 参数 + 测试项目 + 单位名称 + 联系地址。
+
+        注意：只有当 5 个字段在“已有条目”和“输入参数”中均非空且完全匹配，才判定为重复。
+        这样可避免单字段缺失时的误判。
+        """
+        n_name = self._norm(name)
+        n_param = self._norm(parameters)
+        n_test = self._norm(test_items)
+        n_unit = self._norm(unit_name)
+        n_addr = self._norm(address)
+
+        # 输入若存在缺失，无法严格判定重复
+        if not all([n_name, n_param, n_test, n_unit, n_addr]):
+            return None
+
+        for it in self._items:
+            try:
+                it_name = self._norm(it.name)
+                md = it.metadata or {}
+                it_param = self._norm(md.get("参数"))
+                it_test = self._norm(md.get("测试项目"))
+                it_unit = self._norm(md.get("单位名称") or md.get("单位"))
+                it_addr = self._norm(it.address or (md.get("原始地址") if isinstance(md, dict) else None))
+                if all([it_name, it_param, it_test, it_unit, it_addr]) and (it_name == n_name and it_param == n_param and it_test == n_test and it_unit == n_unit and it_addr == n_addr):
+                    return {
+                        "id": it.id,
+                        "name": it.name,
+                        "description": it.description,
+                        "tags": it.tags,
+                        "image_url": it.image_url,
+                        "address": it.address,
+                        "lat": it.lat,
+                        "lng": it.lng,
+                        "metadata": it.metadata,
+                        "quantity": it.quantity,
+                    }
+            except Exception:
+                continue
+        return None
     
     def _get_raw_item_data(self, item_id: str) -> Optional[Dict]:
         """获取原始JSON数据中的条目信息"""

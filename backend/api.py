@@ -56,6 +56,7 @@ async def api_upsert_full(req: UpsertFullRequest) -> ItemResponse:
     vector = await client.embed(text)
     await client.aclose()
 
+    # 仅生成 location（不再持久化顶层 lat/lng）
     lat_val = req.lat
     lng_val = req.lng
     if (lat_val is None or lng_val is None) and (req.address or "").strip():
@@ -64,6 +65,18 @@ async def api_upsert_full(req: UpsertFullRequest) -> ItemResponse:
         lng_val = geo.get("lng")
 
     store = RagStoreFaiss()
+    # 先进行查重：需要 name/参数/测试项目/单位名称/地址 完整匹配
+    md = req.metadata or {}
+    dup = store.find_duplicate(
+        name=req.name,
+        parameters=(md.get("参数") if isinstance(md, dict) else None),
+        test_items=(md.get("测试项目") if isinstance(md, dict) else None),
+        unit_name=((md.get("单位名称") or md.get("单位")) if isinstance(md, dict) else None),
+        address=(req.address or (md.get("原始地址") if isinstance(md, dict) else None)),
+    )
+    if dup:
+        # 直接返回已存在条目，避免重复写入
+        return ItemResponse(**dup)  # type: ignore[arg-type]
     item_id = store.upsert(
         name=req.name,
         description=req.description or "",
@@ -84,6 +97,27 @@ async def api_upsert_from_form(
     *, name: str, description: str, tags_csv: str, image_url: str, address: Optional[str], quantity: Optional[int]
 ) -> ItemResponse:
     tags = [t.strip().lower() for t in (tags_csv or "").split(",") if t.strip()]
+    # 表单模式下，尽可能从描述中抽取“参数/测试项目/单位名称”，以便查重
+    def _kv(key: str) -> Optional[str]:
+        import re as _re
+        m = _re.search(rf"{key}[:：]\s*(.+)", description or "")
+        return m.group(1).strip() if m else None
+    meta_like = {
+        "参数": _kv("参数"),
+        "测试项目": _kv("测试项目"),
+        "单位名称": _kv("单位名称") or _kv("单位"),
+        "原始地址": address or "",
+    }
+    store = RagStoreFaiss()
+    dup = store.find_duplicate(
+        name=name,
+        parameters=meta_like.get("参数"),
+        test_items=meta_like.get("测试项目"),
+        unit_name=meta_like.get("单位名称"),
+        address=address,
+    )
+    if dup:
+        return ItemResponse(**dup)  # type: ignore[arg-type]
     client = EmbeddingsClient()
     text = f"{name}\n{description}\nTags: {', '.join(tags)}"
     vector = await client.embed(text)
@@ -178,6 +212,24 @@ async def api_ask(*, query: str, top_k: int) -> Dict[str, Any]:
     return {"answer": answer, "sources": docs, "recommendations": docs}
 
 
+async def api_check_duplicate(payload: Dict[str, Optional[str]]) -> Dict[str, Any]:
+    """按指定关键字段检查是否重复。
+
+    预期字段：name, parameters, test_items, unit_name, address
+    """
+    store = RagStoreFaiss()
+    dup = store.find_duplicate(
+        name=payload.get("name"),
+        parameters=payload.get("parameters"),
+        test_items=payload.get("test_items"),
+        unit_name=payload.get("unit_name"),
+        address=payload.get("address"),
+    )
+    if dup:
+        return {"duplicate": True, "item": dup}
+    return {"duplicate": False}
+
+
 async def api_reindex() -> Dict[str, int]:
     client = EmbeddingsClient()
 
@@ -219,6 +271,29 @@ async def http_upsert_equipment(
     static_root = Path(__file__).resolve().parents[1] / "static"
     uploads_dir = static_root / Path(settings.uploads_dir).name if not Path(settings.uploads_dir).is_absolute() else Path(settings.uploads_dir)
     uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # 先做一次查重（不依赖 image_url）
+    # 尝试从 description 中提取关键字段用于查重
+    def _kv2(key: str) -> Optional[str]:
+        import re as _re
+        m = _re.search(rf"{key}[:：]\s*(.+)", description or "")
+        return m.group(1).strip() if m else None
+    meta_like2 = {
+        "参数": _kv2("参数"),
+        "测试项目": _kv2("测试项目"),
+        "单位名称": _kv2("单位名称") or _kv2("单位"),
+        "原始地址": address or "",
+    }
+    store_chk = RagStoreFaiss()
+    dup_pre = store_chk.find_duplicate(
+        name=name,
+        parameters=meta_like2.get("参数"),
+        test_items=meta_like2.get("测试项目"),
+        unit_name=meta_like2.get("单位名称"),
+        address=address,
+    )
+    if dup_pre:
+        return ItemResponse(**dup_pre)  # type: ignore[arg-type]
 
     image_url = ""
     if image is not None:
@@ -316,5 +391,17 @@ async def http_delete_item(item_id: str) -> dict:
     except Exception:
         pass
     return res
+
+
+@router.post("/check_duplicate", response_model=dict)
+async def http_check_duplicate(body: Dict[str, Optional[str]]) -> dict:
+    """检查是否存在重复条目。
+
+    body: { name, parameters, test_items, unit_name, address }
+    """
+    try:
+        return await api_check_duplicate(body)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
