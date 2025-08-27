@@ -27,7 +27,7 @@ class Settings(BaseModel):
 
     ollama_host: str = Field(default="http://localhost:11434", description="Ollama 服务地址")
     ollama_model: str = Field(default="llama3.1:8b", description="默认模型名称")
-    ollama_embed_model: str = Field(default="nomic-embed-text", description="Embedding 模型名称")
+    ollama_embed_model: str = Field(default="bge-m3", description="Embedding 模型名称")
 
     log_level: str = Field(default="INFO", description="日志等级：DEBUG/INFO/WARNING/ERROR")
 
@@ -41,18 +41,19 @@ def get_settings() -> Settings:
     """返回全局唯一的配置实例。
 
     使用 lru_cache 保证单例，避免重复构建与多处导入造成的配置不一致。
+    注意：不再读取环境变量，直接使用配置文件中的固定值。
     """
 
-    # 简单从环境变量读取，覆盖默认值
+    # 直接使用固定配置值，不受环境变量影响
     return Settings(
-        api_host=os.getenv("API_HOST", Settings.model_fields["api_host"].default),
-        api_port=int(os.getenv("API_PORT", Settings.model_fields["api_port"].default)),
-        ollama_host=os.getenv("OLLAMA_HOST", Settings.model_fields["ollama_host"].default),
-        ollama_model=os.getenv("OLLAMA_MODEL", Settings.model_fields["ollama_model"].default),
-        ollama_embed_model=os.getenv("OLLAMA_EMBED_MODEL", Settings.model_fields["ollama_embed_model"].default),
-        log_level=os.getenv("LOG_LEVEL", Settings.model_fields["log_level"].default),
-        data_dir=os.getenv("DATA_DIR", Settings.model_fields["data_dir"].default),
-        uploads_dir=os.getenv("UPLOADS_DIR", Settings.model_fields["uploads_dir"].default),
+        api_host="0.0.0.0",
+        api_port=8000,
+        ollama_host="http://localhost:11434",
+        ollama_model="llama3.1:8b",
+        ollama_embed_model="bge-m3",
+        log_level="INFO",
+        data_dir="data",
+        uploads_dir="static/uploads",
     )
 
 

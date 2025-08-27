@@ -39,7 +39,10 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from backend.core.logger import logger
 from backend.core.config import get_settings
-from backend.models.schemas import UpsertFullRequest, ItemResponse, RecommendResponse, EquipmentItem
+from backend.models.schemas import (
+    UpsertFullRequest, ItemResponse, RecommendResponse, EquipmentItem,
+    BatchUpsertRequest, BatchUpsertResponse, BatchUpsertResult
+)
 from backend.services.embeddings_client import EmbeddingsClient
 from backend.services.rag_store_faiss import RagStoreFaiss
 from backend.services.geocode_baidu import geocode_address
@@ -230,6 +233,121 @@ async def api_check_duplicate(payload: Dict[str, Optional[str]]) -> Dict[str, An
     return {"duplicate": False}
 
 
+async def api_batch_upsert(req: BatchUpsertRequest) -> BatchUpsertResponse:
+    """批量插入API - 提高导入性能"""
+    import time
+    start_time = time.time()
+    
+    total = len(req.items)
+    success_count = 0
+    failed_count = 0
+    duplicate_count = 0
+    results = []
+    
+    # 批量生成embedding
+    client = EmbeddingsClient()
+    try:
+        # 1. 准备所有文本
+        texts = []
+        for item in req.items:
+            text = f"{item.name}\n{item.description or ''}\nTags: {', '.join(item.tags or [])}"
+            texts.append(text)
+        
+        # 2. 批量生成向量 (这里仍然需要逐个调用，但可以考虑并发)
+        vectors = []
+        for i, text in enumerate(texts):
+            try:
+                vector = await client.embed(text)
+                vectors.append(vector)
+                logger.info("batch.embed.success", extra={"event": "batch_embed", "index": i})
+            except Exception as e:
+                logger.error("batch.embed.error", extra={"event": "batch_embed_error", "index": i, "error": str(e)})
+                vectors.append(None)
+        
+        # 3. 批量处理地理编码
+        addresses = [item.address or "" for item in req.items]
+        geocode_results = []
+        for address in addresses:
+            if address.strip():
+                try:
+                    geo_result = await geocode_address(address)
+                    geocode_results.append(geo_result)
+                except Exception:
+                    geocode_results.append({"lat": None, "lng": None})
+            else:
+                geocode_results.append({"lat": None, "lng": None})
+        
+        # 4. 批量存储
+        store = RagStoreFaiss()
+        for i, (item, vector, geo_result) in enumerate(zip(req.items, vectors, geocode_results)):
+            result = BatchUpsertResult(
+                success=False,
+                name=item.name,
+                duplicate=False
+            )
+            
+            try:
+                if vector is None:
+                    result.error = "向量生成失败"
+                    failed_count += 1
+                else:
+                    # 检查重复
+                    md = item.metadata or {}
+                    dup = store.find_duplicate(
+                        name=item.name,
+                        parameters=(md.get("参数") if isinstance(md, dict) else None),
+                        test_items=(md.get("测试项目") if isinstance(md, dict) else None),
+                        unit_name=((md.get("单位名称") or md.get("单位")) if isinstance(md, dict) else None),
+                        address=(item.address or (md.get("原始地址") if isinstance(md, dict) else None)),
+                    )
+                    
+                    if dup:
+                        result.duplicate = True
+                        result.item_id = dup["id"]
+                        duplicate_count += 1
+                    else:
+                        # 插入新记录
+                        lat_val = item.lat if item.lat is not None else geo_result.get("lat")
+                        lng_val = item.lng if item.lng is not None else geo_result.get("lng")
+                        
+                        item_id = store.upsert(
+                            name=item.name,
+                            description=item.description or "",
+                            tags=[t.strip().lower() for t in (item.tags or []) if t.strip()],
+                            image_url=item.image_url or "",
+                            vector=vector,
+                            address=item.address,
+                            lat=lat_val,
+                            lng=lng_val,
+                            metadata=item.metadata,
+                            quantity=item.quantity,
+                        )
+                        
+                        result.success = True
+                        result.item_id = item_id
+                        success_count += 1
+                        
+            except Exception as e:
+                result.error = str(e)
+                failed_count += 1
+            
+            results.append(result)
+    
+    finally:
+        await client.aclose()
+    
+    processing_time = time.time() - start_time
+    
+    return BatchUpsertResponse(
+        total=total,
+        success=success_count,
+        failed=failed_count,
+        duplicates=duplicate_count,
+        processing_time=round(processing_time, 2),
+        results=results
+    )
+
+
 async def api_reindex() -> Dict[str, int]:
     client = EmbeddingsClient()
 
@@ -317,11 +435,38 @@ async def http_upsert_equipment(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/geocode")
+async def http_geocode(request: Dict[str, str]) -> Dict[str, Optional[float]]:
+    """地理编码API - 将地址转换为经纬度坐标"""
+    try:
+        address = request.get("address", "").strip()
+        if not address:
+            return {"lat": None, "lng": None}
+        
+        result = await geocode_address(address)
+        return {
+            "lat": result.get("lat"),
+            "lng": result.get("lng")
+        }
+    except Exception as e:
+        logger.error("geocode.error", extra={"event": "geocode_error", "error": str(e)})
+        return {"lat": None, "lng": None}
+
+
 @router.post("/upsert_full", response_model=ItemResponse)
 async def http_upsert_full(req: UpsertFullRequest) -> ItemResponse:
     """JSON 方式新增/更新（与批量导入对齐）。"""
     try:
         return await api_upsert_full(req)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/batch_upsert", response_model=BatchUpsertResponse)
+async def http_batch_upsert(req: BatchUpsertRequest) -> BatchUpsertResponse:
+    """批量插入API - 性能优化版本"""
+    try:
+        return await api_batch_upsert(req)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -403,5 +548,26 @@ async def http_check_duplicate(body: Dict[str, Optional[str]]) -> dict:
         return await api_check_duplicate(body)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/clear_all")
+async def http_clear_all() -> Dict[str, Any]:
+    """清空所有RAG数据和FAISS索引，准备重新导入。
+    
+    ⚠️ 危险操作：将删除所有设备数据和向量索引！
+    """
+    try:
+        store = RagStoreFaiss()
+        old_count = len(store._items)
+        store.clear_all_data()
+        
+        return {
+            "success": True,
+            "message": f"已清空所有数据，原有{old_count}个设备记录已删除",
+            "cleared_count": old_count
+        }
+    except Exception as e:
+        logger.error("clear_all.error", extra={"event": "clear_all_error", "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"清空数据失败: {str(e)}")
 
 

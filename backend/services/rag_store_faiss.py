@@ -486,6 +486,28 @@ class RagStoreFaiss:
         faiss.normalize_L2(vectors)
         self._index.add_with_ids(vectors, np.array(ids, dtype=np.int64))
 
+    def clear_all_data(self) -> None:
+        """清空所有数据和索引，准备重新导入。"""
+        logger.info("rag_store_faiss.clearing_all", extra={"event": "clear_all", "count": len(self._items)})
+        
+        # 清空内存数据
+        self._items.clear()
+        
+        # 重置索引
+        self._index = None
+        self._dimension = None
+        
+        # 删除磁盘文件
+        if self._store_file.exists():
+            self._store_file.unlink()
+            logger.info("rag_store_faiss.deleted_metadata", extra={"event": "delete_metadata"})
+        
+        if self._index_file.exists():
+            self._index_file.unlink()
+            logger.info("rag_store_faiss.deleted_index", extra={"event": "delete_index"})
+        
+        logger.info("rag_store_faiss.cleared", extra={"event": "clear_complete"})
+
     async def reindex_async(self, embed_async) -> int:
         """使用异步 embed 函数重建全部向量。
 

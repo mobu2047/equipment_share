@@ -730,7 +730,7 @@ def main() -> None:
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # 拼接到 data 目录
-    file_path = os.path.join(base_dir, "..", "data", "工作簿1.xlsx")
+    file_path = os.path.join(base_dir, "..", "data", "device_data.xlsx")
 
     result = run_import(
         file= file_path,      # Excel 路径

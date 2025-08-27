@@ -68,3 +68,28 @@ class ItemResponse(BaseModel):
     quantity: Optional[int] = None
 
 
+class BatchUpsertRequest(BaseModel):
+    """批量插入请求"""
+    items: List[UpsertFullRequest] = Field(..., description="要批量插入的设备列表")
+    batch_size: Optional[int] = Field(50, description="批处理大小")
+
+
+class BatchUpsertResult(BaseModel):
+    """单个批量插入结果"""
+    success: bool
+    item_id: Optional[str] = None
+    error: Optional[str] = None
+    name: str
+    duplicate: bool = False
+
+
+class BatchUpsertResponse(BaseModel):
+    """批量插入响应"""
+    total: int
+    success: int
+    failed: int
+    duplicates: int
+    processing_time: float
+    results: List[BatchUpsertResult]
+
+
