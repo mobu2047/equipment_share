@@ -4,21 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="9a9b33b7-7663-4c81-9e14-79ca555e9300" name="更改" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/equipment_share.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/equipment_share.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/api.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/api.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/core/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/core/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/models/schemas.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/models/schemas.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/routers/equipment.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/routers/equipment.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/services/rag_store.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/services/rag_store_faiss.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/rag_store_faiss.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/app.js" beforeDir="false" afterPath="$PROJECT_DIR$/static/app.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/styles.css" beforeDir="false" afterPath="$PROJECT_DIR$/static/styles.css" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tools/import_excel.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/import_excel.py" afterDir="false" />
-    </list>
+    <list default="true" id="9a9b33b7-7663-4c81-9e14-79ca555e9300" name="更改" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -162,7 +148,7 @@
       <workItem from="1756113869127" duration="129000" />
       <workItem from="1756115211385" duration="4453000" />
       <workItem from="1756195601752" duration="1024000" />
-      <workItem from="1756197961467" duration="7266000" />
+      <workItem from="1756197961467" duration="7880000" />
     </task>
     <servers />
   </component>
@@ -185,7 +171,7 @@
       <breakpoints>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/backend/api.py</url>
-          <line>364</line>
+          <line>358</line>
           <option name="timeStamp" value="1" />
         </line-breakpoint>
       </breakpoints>
@@ -193,7 +179,7 @@
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/equipment_share$scratch.coverage" NAME="scratch 覆盖结果" MODIFIED="1755848909650" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$APPLICATION_CONFIG_DIR$/scratches" />
-    <SUITE FILE_PATH="coverage/equipment_share$main.coverage" NAME="main 覆盖结果" MODIFIED="1756280546810" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/backend" />
+    <SUITE FILE_PATH="coverage/equipment_share$main.coverage" NAME="main 覆盖结果" MODIFIED="1756282472265" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/backend" />
     <SUITE FILE_PATH="coverage/equipment_share$import_excel.coverage" NAME="import_excel 覆盖结果" MODIFIED="1755854009598" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tools" />
   </component>
 </project>
