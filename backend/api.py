@@ -25,6 +25,7 @@
 - GET  /api/rag/list             -> { items[] }（简表）
 - DELETE /api/rag/delete/{id}    -> { deleted, id }
 
+
 维护约定：
 - 新增/修改/删除 API，都在本文件中进行；路由与业务保持同文件、同命名空间，便于检索与维护。
 """
@@ -35,7 +36,7 @@ from typing import Any, Dict, List, Optional
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request
 
 from backend.core.logger import logger
 from backend.core.config import get_settings
@@ -471,6 +472,77 @@ async def http_batch_upsert(req: BatchUpsertRequest) -> BatchUpsertResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/import_excel_async", response_model=dict)
+async def http_import_excel_async(
+    request: Request,
+    file: UploadFile = File(...),
+    mode: str = Form("append"),
+    concurrency: int = Form(10),
+    sheet: str = Form("0"),
+) -> Dict[str, Any]:
+    """接收 Excel 文件并直接执行异步导入（复用 tools/import_excel_async.py 逻辑）。
+
+    用法（Postman，multipart/form-data）：
+    - URL: /api/rag/import_excel_async
+    - form-data:
+      - file: 选择本地 Excel 文件（例如 data/device_data.xlsx）
+      - mode: append|overwrite（默认 append；overwrite 会清空数据+索引并删除导入图片）
+      - concurrency: 并发数（默认 10）
+      - sheet: 工作表名称或索引（默认 "0"）
+
+    返回：
+    - 与脚本导入 summary 一致的 JSON（total/success/failed/duplicates/elapsed_seconds/...）
+
+    实现说明：
+    - 将上传文件保存到相对目录（项目根/data），避免绝对路径依赖，便于后续移植。
+    - 通过 request.base_url 作为 api_base，脚本内部通过 HTTP 调用本服务既有 API 实现导入。
+    - 若 mode=overwrite，脚本会自动调用 /api/rag/clear_all 并 cleanup_images=true。
+    """
+    try:
+        import os as _os
+        from pathlib import Path as _Path
+        import uuid as _uuid
+
+        # 1) 解析 sheet（可能是索引或名称）
+        sheet_param: Any
+        try:
+            sheet_param = int(sheet)
+        except Exception:
+            sheet_param = sheet
+
+        # 2) 将上传文件保存到项目根 data 目录（相对路径）
+        project_root = _Path(__file__).resolve().parents[1]
+        data_dir = project_root / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        ext = _Path(file.filename).suffix or ".xlsx"
+        save_name = f"import_{_uuid.uuid4().hex}{ext}"
+        save_path = data_dir / save_name
+        content = await file.read()
+        with open(save_path, "wb") as f:
+            f.write(content)
+
+        # 3) 准备参数并调用脚本的 run_import_async
+        #    - 使用环境变量传递 mode（脚本会读取 IMPORT_MODE）
+        _os.environ["IMPORT_MODE"] = (mode or "append").strip().lower()
+
+        # 计算 api_base，自引用本服务
+        api_base = str(request.base_url).rstrip("/")
+
+        # 惰性导入工具函数，避免模块路径问题
+        try:
+            from tools.import_excel_async import run_import_async as _run_import_async
+        except Exception:
+            import sys as _sys
+            _sys.path.insert(0, str(project_root))
+            from tools.import_excel_async import run_import_async as _run_import_async
+
+        # 执行导入
+        result = await _run_import_async(file=str(save_path), api=api_base, concurrency=int(concurrency), sheet=sheet_param)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/item/{item_id}", response_model=ItemResponse)
 async def http_get_item(item_id: str) -> ItemResponse:
     try:
@@ -551,20 +623,76 @@ async def http_check_duplicate(body: Dict[str, Optional[str]]) -> dict:
 
 
 @router.post("/clear_all")
-async def http_clear_all() -> Dict[str, Any]:
-    """清空所有RAG数据和FAISS索引，准备重新导入。
-    
-    ⚠️ 危险操作：将删除所有设备数据和向量索引！
+async def http_clear_all(options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """清空所有RAG数据与FAISS索引；可选同时清理导入脚本产生的图片。
+
+    请求体（可选，application/json）：
+    - cleanup_images: bool  是否同时删除导入脚本生成的图片文件（默认 True
+    - prefixes: string[]    需要删除的文件名前缀（默认 ["import_embed_", "import_shape_", "import_disp_"]）
+
+    用法示例：
+    1) 仅清空数据与索引（默认行为）
+       curl -X POST http://<host>:<port>/api/rag/clear_all
+
+    2) 覆盖导入前执行：清空数据与索引，并删除导入图片
+       curl -X POST http://<host>:<port>/api/rag/clear_all \
+            -H "Content-Type: application/json" \
+            -d '{"cleanup_images": true}'
+
+    说明：
+    - 图片删除仅作用于 static/uploads 下由导入脚本生成的文件，
+      通过前缀限制避免误删其他业务图片。
+    - 路径解析相对于项目根目录进行，不使用硬编码绝对路径。
     """
     try:
         store = RagStoreFaiss()
         old_count = len(store._items)
         store.clear_all_data()
-        
+
+        # 2) 可选清理导入脚本生成的图片
+        images_info: Dict[str, Any] = {}
+        cleanup_images = bool((options or {}).get("cleanup_images", True))
+        prefixes = (options or {}).get("prefixes") or ["import_embed_", "import_shape_", "import_disp_"]
+
+        if cleanup_images:
+            try:
+                settings = get_settings()
+                # 统一锚定到项目根 static 目录，避免工作目录差异与绝对路径依赖
+                static_root = Path(__file__).resolve().parents[1] / "static"
+                uploads_dir = (
+                    static_root / Path(settings.uploads_dir).name
+                    if not Path(settings.uploads_dir).is_absolute()
+                    else Path(settings.uploads_dir)
+                )
+
+                matched = 0
+                deleted = 0
+                if uploads_dir.exists() and uploads_dir.is_dir():
+                    for p in uploads_dir.iterdir():
+                        try:
+                            if p.is_file() and any(p.name.startswith(pref) for pref in prefixes):
+                                matched += 1
+                                p.unlink(missing_ok=True)
+                                deleted += 1
+                        except Exception:
+                            # 单文件失败不影响总体流程
+                            continue
+
+                images_info = {
+                    "uploads_dir": f"/static/{uploads_dir.relative_to(static_root).as_posix()}" if uploads_dir.exists() else "/static/uploads",
+                    "matched_count": matched,
+                    "deleted_count": deleted,
+                    "prefixes": prefixes,
+                }
+            except Exception as e:
+                # 图片清理失败不阻断清空流程，返回错误信息以便排查
+                images_info = {"error": str(e), "prefixes": prefixes}
+
         return {
             "success": True,
             "message": f"已清空所有数据，原有{old_count}个设备记录已删除",
-            "cleared_count": old_count
+            "cleared_count": old_count,
+            "images_cleanup": images_info or None,
         }
     except Exception as e:
         logger.error("clear_all.error", extra={"event": "clear_all_error", "error": str(e)})
