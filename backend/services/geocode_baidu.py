@@ -21,7 +21,10 @@ import httpx
 
 DEFAULT_BAIDU_AKS: List[Tuple[str, Optional[str]]] = [
     ("CSYncH7N4W3TPe6oVGreyESBP9NdyJYQ", "aQVWWSbIol0JlRS9mPyIDBhAdkzOsx29"),
-    ("ztdw8fVwy5ATQJuuqAaRM01WPIdGXc1p", None),
+    ("Q2ZDAy4o8pmxJVUNrcStCeFJIoXV6wIx", "i4GNX5gHBkPUZuL4ilTcMcSqOnqKqNdR"),
+    ("RQDaIV5apT8QrtT0AWjnDRKcsAbfjchB", "mHh608GUDzUK7awbjJuiMffyT1DiuuLD"),
+    ("PLOEUYL6jskriUeaYacnXOw2W02NGrU3", "ZpnFREMtlMgozOGxDLjJDmPbRRpVRIdq"),
+    ("ccVeC9q5pMMdpF72oMSo8uemymty0qnX", "Iw2lO7G8rAknfmI4rUe600R9WHXTZZWK")
 ]
 
 
