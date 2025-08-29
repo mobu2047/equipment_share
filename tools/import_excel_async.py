@@ -8,11 +8,7 @@
 - 批量FAISS索引更新，减少磁盘IO
 
 使用：
-  python tools/import_excel_async.py --file data.xlsx --api http://localhost:8000 --concurrency 10 [--mode append|overwrite]
-
-两种导入模式：
-- append（默认）：保留历史数据与索引，仅追加新数据（查重后跳过重复）
-- overwrite：覆盖导入；导入前调用后端 /api/rag/clear_all 并附带 cleanup_images=true 同步删除导入脚本生成的图片
+  python tools/import_excel_async.py --file data.xlsx --api http://localhost:8000 --concurrency 10
 
 性能对比：
 - 原版本：1000行 ~45分钟
@@ -167,20 +163,13 @@ class GeocodeCache:
 class AsyncExcelImporter:
     """异步Excel导入器"""
     
-    def __init__(self, api_base: str, concurrency: int = 10, mode: str = "append"):
+    def __init__(self, api_base: str, concurrency: int = 10):
         self.api_base = api_base.rstrip('/')
         self.concurrency = concurrency
-        # 导入模式：append | overwrite
-        # append：不清空数据与索引，不删图片
-        # overwrite：清空数据与索引，并清理由本脚本生成的图片（import_embed_/import_shape_/import_disp_ 前缀）
-        self.mode = (mode or "append").strip().lower()
         self.stats = AsyncImportStats()
         self.geocode_cache = GeocodeCache()
         self._session: Optional[aiohttp.ClientSession] = None
         self.embedded_images: Dict[int, str] = {}  # 存储预提取的嵌入图片映射
-        # 标记索引是否已初始化（非空）。
-        # 需求：先确认索引非空再进行查重，避免空索引阶段的无效查重与噪声日志。
-        self.index_ready: bool = False
         
         # 创建输出目录
         self.project_root = Path(__file__).resolve().parents[1]
@@ -261,29 +250,6 @@ class AsyncExcelImporter:
                     return False, f"HTTP {resp.status}: {error_text[:200]}", None
         except Exception as e:
             return False, str(e), None
-
-    async def _is_index_non_empty(self) -> bool:
-        """探测后端索引/数据是否已存在
-
-        - 优先使用 /api/rag/list 的返回结构判断（items 非空或 total>0）
-        - 失败时返回 False
-        """
-        try:
-            async with self._session.get(f"{self.api_base}/api/rag/list", timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return False
-                data = await resp.json()
-                if isinstance(data, dict):
-                    if "items" in data and isinstance(data["items"], list):
-                        return len(data["items"]) > 0
-                    if "total" in data:
-                        try:
-                            return int(data["total"]) > 0
-                        except Exception:
-                            return False
-                return False
-        except Exception:
-            return False
     
     async def _save_image_async(self, value: str, base_dir: Optional[Path] = None) -> str:
         """异步保存图片并返回 image_url。支持：URL、本地路径、dataURI、多个值分隔。"""
@@ -576,11 +542,8 @@ class AsyncExcelImporter:
         
         return embedded_map
     
-    async def _process_row_async(self, idx: int, row: Dict[str, Any], excel_dir: Path, *, check_duplicate: bool = True) -> Dict[str, Any]:
-        """异步处理单行数据
-
-        - check_duplicate: 是否执行查重逻辑；当索引为空时应禁止查重，先写入以初始化索引
-        """
+    async def _process_row_async(self, idx: int, row: Dict[str, Any], excel_dir: Path) -> Dict[str, Any]:
+        """异步处理单行数据"""
         row_result = {
             "row_index": idx,
             "success": False,
@@ -604,23 +567,21 @@ class AsyncExcelImporter:
             description = make_description(row, name=name)
             address = str(row.get("联系地址") or row.get("地址") or "").strip()
             
-            # 2. 并发执行地理编码；查重根据标记决定是否执行
+            # 2. 并发执行地理编码和重复检测
             geocode_task = self._geocode_async(address)
-            if check_duplicate:
-                # 构建重复检测payload
-                dup_payload = {
-                    "name": name,
-                    "parameters": row.get("参数", ""),
-                    "test_items": row.get("测试项目", ""),
-                    "unit_name": row.get("单位名称", "") or row.get("单位", ""),
-                    "address": address,
-                }
-                duplicate_task = self._check_duplicate_async(dup_payload)
-                # 等待地理编码和重复检测完成
-                loc, is_duplicate = await asyncio.gather(geocode_task, duplicate_task)
-            else:
-                loc = await geocode_task
-                is_duplicate = False
+            
+            # 构建重复检测payload
+            dup_payload = {
+                "name": name,
+                "parameters": row.get("参数", ""),
+                "test_items": row.get("测试项目", ""),
+                "unit_name": row.get("单位名称", "") or row.get("单位", ""),
+                "address": address,
+            }
+            duplicate_task = self._check_duplicate_async(dup_payload)
+            
+            # 等待地理编码和重复检测完成
+            loc, is_duplicate = await asyncio.gather(geocode_task, duplicate_task)
             
             if is_duplicate:
                 row_result["duplicate"] = True
@@ -715,9 +676,6 @@ class AsyncExcelImporter:
             if success:
                 row_result["success"] = True
                 self.stats.add_success()
-                # 一旦首次成功写入，则认为索引已初始化
-                if not self.index_ready:
-                    self.index_ready = True
                 
                 # 记录成功项到manifest
                 await self._write_manifest({
@@ -778,7 +736,6 @@ class AsyncExcelImporter:
         """主要的异步导入方法"""
         print(f"🚀 开始异步导入: {file_path}")
         print(f"📊 并发数: {self.concurrency}")
-        print(f"⚙️  导入模式: {self.mode}")
         
         # 1. 读取Excel文件
         try:
@@ -800,32 +757,21 @@ class AsyncExcelImporter:
             print(f"❌ 后端连接失败: {str(e)}")
             return {"error": f"后端连接失败: {str(e)}"}
         
-        # 2.5. 根据模式选择是否清空与删图（覆盖导入前置操作）
-        if self.mode == "overwrite":
-            print("🗑️  覆盖模式：清空现有数据和FAISS索引，并清理导入图片...")
-            try:
-                async with self._session.post(
-                    f"{self.api_base}/api/rag/clear_all",
-                    json={"cleanup_images": True},
-                    timeout=aiohttp.ClientTimeout(total=60)
-                ) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        msg = result.get('message', '成功')
-                        img_info = result.get('images_cleanup') or {}
-                        print(f"✅ 数据清空完成: {msg}")
-                        if img_info:
-                            print(f"🧹 图片清理: 删除 {img_info.get('deleted_count', 0)}/{img_info.get('matched_count', 0)} 个，目录: {img_info.get('uploads_dir', '/static/uploads')}")
-                    else:
-                        print(f"⚠️  清空/删图响应异常: {resp.status}")
-                        error_text = await resp.text()
-                        print(f"错误详情: {error_text}")
-            except Exception as e:
-                print(f"❌ 清空/删图失败: {str(e)}")
-                print("⚠️  继续导入，但可能存在数据/图片残留...")
-                # 不返回错误，允许继续导入
-        else:
-            print("➕  追加模式：保留历史数据与索引，不清空、不删图")
+        # 2.5. 清空所有现有数据（重建索引）
+        print("🗑️  清空现有数据和FAISS索引...")
+        try:
+            async with self._session.post(f"{self.api_base}/api/rag/clear_all", timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    print(f"✅ 数据清空完成: {result.get('message', '成功')}")
+                else:
+                    print(f"⚠️  数据清空响应异常: {resp.status}")
+                    error_text = await resp.text()
+                    print(f"错误详情: {error_text}")
+        except Exception as e:
+            print(f"❌ 数据清空失败: {str(e)}")
+            print("⚠️  继续导入，但可能存在数据冲突...")
+            # 不返回错误，允许继续导入
         
         # 2.6. 预提取嵌入图片（同步操作，避免COM并发问题）
         print("🖼️  预提取Excel嵌入图片...")
@@ -844,28 +790,6 @@ class AsyncExcelImporter:
             print(f"❌ 嵌入图片提取失败: {str(e)}")
             self.embedded_images = {}
         
-        # 2.7. 预判索引是否已存在；若不存在，先用首条有效记录初始化索引，再开始查重
-        try:
-            self.index_ready = await self._is_index_non_empty()
-        except Exception:
-            self.index_ready = False
-        preflight_idx: Optional[int] = None
-        if not self.index_ready:
-            print("🔧 索引为空：先用首条有效记录初始化索引，然后再进行查重...")
-            # 寻找首条有有效名称的记录
-            try:
-                for i, r in df.iterrows():
-                    nm = str(r.get("设备名") or r.get("设备名称") or r.get("名称") or "").strip()
-                    if nm:
-                        preflight_idx = int(i)
-                        excel_dir = Path(file_path).resolve().parent
-                        pre_res = await self._process_row_async(preflight_idx, dict(r), excel_dir, check_duplicate=False)
-                        if pre_res.get("success"):
-                            self.index_ready = True
-                        break
-            except Exception:
-                pass
-
         # 3. 创建信号量控制并发数
         semaphore = asyncio.Semaphore(self.concurrency)
         excel_dir = Path(file_path).resolve().parent
@@ -873,15 +797,10 @@ class AsyncExcelImporter:
         async def process_with_limit(idx_row):
             async with semaphore:
                 idx, row = idx_row
-                # 若在任务创建时索引仍未就绪，则本行不做查重，尽快触发索引初始化
-                return await self._process_row_async(idx, dict(row), excel_dir, check_duplicate=self.index_ready)
+                return await self._process_row_async(idx, dict(row), excel_dir)
         
         # 4. 创建所有任务
-        tasks = []
-        for idx, row in df.iterrows():
-            if preflight_idx is not None and int(idx) == int(preflight_idx):
-                continue  # 已用于初始化索引，避免重复处理
-            tasks.append(process_with_limit((idx, row)))
+        tasks = [process_with_limit((idx, row)) for idx, row in df.iterrows()]
         
         # 5. 执行异步任务，显示进度
         print(f"🔄 开始并发处理 (并发数: {self.concurrency})...")
@@ -916,9 +835,7 @@ class AsyncExcelImporter:
 
 async def run_import_async(file: str, api: str = "http://localhost:8000", concurrency: int = 10, sheet: Any = 0) -> Dict[str, Any]:
     """异步导入的主入口函数"""
-    # 读取环境变量兜底模式（命令行未提供时使用）
-    mode_env = os.environ.get("IMPORT_MODE", "append").strip().lower()
-    async with AsyncExcelImporter(api, concurrency, mode=mode_env) as importer:
+    async with AsyncExcelImporter(api, concurrency) as importer:
         return await importer.import_excel(file, sheet)
 
 
@@ -926,20 +843,17 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # 拼接到 data 目录
-    file_path = os.path.join(base_dir, "..", "device_data.xlsx")
+    file_path = os.path.join(base_dir, "..", "data", "device_data.xlsx")
     """命令行入口"""
     parser = argparse.ArgumentParser(description="异步并发Excel导入工具")
     parser.add_argument("--file", default = file_path, help="Excel文件路径")
     parser.add_argument("--api", default="http://localhost:8000", help="后端API地址")
     parser.add_argument("--concurrency", type=int, default=10, help="并发数 (默认: 10)")
     parser.add_argument("--sheet", default=0, help="工作表名称或索引 (默认: 0)")
-    parser.add_argument("--mode", choices=["append", "overwrite"], default=os.environ.get("IMPORT_MODE", "append"), help="导入模式：append(默认) 或 overwrite")
     
     args = parser.parse_args()
     
     # 运行异步导入
-    # 将命令行传入的模式更新到环境变量，以便 run_import_async 读取
-    os.environ["IMPORT_MODE"] = (args.mode or "append").strip().lower()
     result = asyncio.run(run_import_async(
         file=args.file,
         api=args.api,
