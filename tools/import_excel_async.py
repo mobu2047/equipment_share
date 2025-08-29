@@ -50,61 +50,148 @@ try:
 except ImportError:
     HAS_COM = False
 
-# 复用原脚本的辅助函数
+# 导入地图API
 try:
-    from import_excel import (
-        normalize_tag, extract_tags, make_description, 
-        save_image, _row_key_from_mapping, _get_quantity_from_row
-    )
-    # 导入地理编码服务
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from backend.services.geocode_baidu import geocode_address
     HAS_GEOCODE_FUNC = True
 except ImportError:
     HAS_GEOCODE_FUNC = False
-    # 如果无法导入，则在此文件中重新定义必要函数
-    def normalize_tag(text: str) -> str:
-        return (text or "").strip().lower()
-    
-    def extract_tags(row: Dict[str, Any]) -> List[str]:
-        tags: List[str] = []
-        for key in ["类别", "测试项目", "测试标准"]:
-            val = str(row.get(key) or "").strip()
-            if val:
-                tags.extend([normalize_tag(x) for x in val.replace(";", ",").split(",") if x.strip()])
-        uniq = []
-        seen = set()
-        for t in tags:
-            if t and t not in seen:
-                uniq.append(t)
-                seen.add(t)
-        return uniq
-    
-    def make_description(row: Dict[str, Any], name: str = "") -> str:
-        parts = []
-        if name or row.get("设备名") or row.get("设备名称"):
-            parts.append(f"名称: {name or row.get('设备名') or row.get('设备名称')}")
-        if row.get("类别"):
-            parts.append(f"类别: {row['类别']}")
-        if row.get("测试项目"):
-            parts.append(f"测试项目: {row['测试项目']}")
-        if row.get("参数"):
-            parts.append(f"参数: {row['参数']}")
-        if row.get("测试标准"):
-            parts.append(f"测试标准: {row['测试标准']}")
-        if row.get("资质介绍"):
-            parts.append(f"资质: {row['资质介绍']}")
-        if row.get("是否出具报告"):
-            parts.append(f"出具报告: {row['是否出具报告']}")
-        if row.get("预计价格") and row.get("单位"):
-            parts.append(f"价格: {row['预计价格']}{row['单位']}")
-        return "\n".join(parts)
-    
-    def _row_key_from_mapping(row: Dict[str, Any]) -> str:
-        name = str(row.get("设备名") or row.get("设备名称") or row.get("名称") or "").strip().lower()
-        unit = str(row.get("单位名称") or row.get("单位") or "").strip().lower()
-        return f"{name}|{unit}"
+
+def _row_key_from_mapping(row: Dict[str, Any]) -> str:
+    """生成行锚点：用于将图片与数据行稳健匹配。"""
+    name = str(row.get("设备名") or row.get("设备名称") or row.get("名称") or "").strip().lower()
+    unit = str(row.get("单位名称") or row.get("单位") or "").strip().lower()
+    return f"{name}|{unit}"
+
+
+def save_image(value: str, uploads_dir: Path, base_dir: Optional[Path] = None) -> str:
+    """保存图片并返回 image_url。支持：URL、本地路径、dataURI、多个值分隔。
+
+    设计要点：
+    - 多值（逗号/分号/换行/空格）时取第一个有效项
+    - 相对路径相对 Excel 所在目录解析
+    - URL 无扩展名时按 Content-Type 猜测扩展
+    """
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    if not value:
+        return ""
+    # 取第一个非空候选
+    candidates = []
+    raw = str(value).strip()
+    for sep in ["\n", "\r", ",", ";", " "]:
+        raw = raw.replace(sep, "|")
+    for part in raw.split("|"):
+        p = part.strip()
+        if p:
+            candidates.append(p)
+    if not candidates:
+        return ""
+def normalize_tag(text: str) -> str:
+    return (text or "").strip().lower()
+
+def extract_tags(row: Dict[str, Any]) -> List[str]:
+    tags: List[str] = []
+    for key in ["类别", "测试项目", "测试标准"]:
+        val = str(row.get(key) or "").strip()
+        if val:
+            tags.extend([normalize_tag(x) for x in val.replace(";", ",").split(",") if x.strip()])
+    uniq = []
+    seen = set()
+    for t in tags:
+        if t and t not in seen:
+            uniq.append(t)
+            seen.add(t)
+    return uniq
+
+def make_description(row: Dict[str, Any], name: str = "") -> str:
+    parts = []
+    if name or row.get("设备名") or row.get("设备名称"):
+        parts.append(f"名称: {name or row.get('设备名') or row.get('设备名称')}")
+    if row.get("类别"):
+        parts.append(f"类别: {row['类别']}")
+    if row.get("测试项目"):
+        parts.append(f"测试项目: {row['测试项目']}")
+    if row.get("参数"):
+        parts.append(f"参数: {row['参数']}")
+    if row.get("测试标准"):
+        parts.append(f"测试标准: {row['测试标准']}")
+    if row.get("资质介绍"):
+        parts.append(f"资质: {row['资质介绍']}")
+    if row.get("是否出具报告"):
+        parts.append(f"出具报告: {row['是否出具报告']}")
+    if row.get("预计价格") and row.get("单位"):
+        parts.append(f"价格: {row['预计价格']}{row['单位']}")
+    return "\n".join(parts)
+
+def _row_key_from_mapping(row: Dict[str, Any]) -> str:
+    name = str(row.get("设备名") or row.get("设备名称") or row.get("名称") or "").strip().lower()
+    unit = str(row.get("单位名称") or row.get("单位") or "").strip().lower()
+    return f"{name}|{unit}"
+
+
+def _get_quantity_from_row(row: Dict[str, Any]) -> Optional[int]:
+    """尽可能从一行中解析出台数。
+
+    覆盖常见列名：
+    - 台数、台 数、数量、数量(台)、数量（台）、台数(台)、台数（台）、设备台数、库存
+    同时提供降级：扫描所有列名，去空格/括号后若包含“台数”或等于“数量”，尝试解析。
+    """
+    preferred_keys = [
+        "台数", "台 数", "数量", "数量(台)", "数量（台）", "台数(台)", "台数（台）", "设备台数", "库存",
+    ]
+    for key in preferred_keys:
+        if key in row:
+            q = _extract_int_quantity(row.get(key))
+            if q is not None:
+                return q
+    # 退化：扫描所有列，容忍空格与中英文括号、全角
+    trans_table = str.maketrans({
+        " ": "", "\t": "", "（": "(", "）": ")", "【": "[", "】": "]",
+    })
+    for k in row.keys():
+        try:
+            norm = str(k).translate(trans_table)
+        except Exception:
+            continue
+        if "台数" in norm or norm == "数量" or norm.startswith("数量("):
+            q = _extract_int_quantity(row.get(k))
+            if q is not None:
+                return q
+    return None
+
+def _extract_int_quantity(value: Any) -> Optional[int]:
+    """从多种可能的输入中提取整数台数。
+
+    设计考量：
+    - Excel 中常见格式：“3”“ 3 ”、“3台”、“3.0”、“约3台”；
+    - 若为浮点字符串，取其整数部分；
+    - 若存在多个数字，取第一个；
+    - 中文小写数字（如“二台”）暂不处理，避免过度猜测。
+    """
+    try:
+        s = str(value).strip()
+    except Exception:
+        return None
+    if not s:
+        return None
+    # 直接是纯数字
+    if s.isdigit():
+        try:
+            return int(s)
+        except Exception:
+            return None
+    # 提取第一个数字（支持小数）
+    m = re.search(r"\d+(?:[\.,]\d+)?", s)
+    if not m:
+        return None
+    num_str = m.group(0).replace(",", ".")
+    try:
+        # 统一转 float 再取整，兼容 "3.0"
+        return int(float(num_str))
+    except Exception:
+        return None
 
 
 class AsyncImportStats:
@@ -186,6 +273,10 @@ class AsyncExcelImporter:
         self.project_root = Path(__file__).resolve().parents[1]
         self.uploads_dir = self.project_root / "static" / "uploads"
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        # 临时图片目录：仅在“确认导入成功”后才移动到最终 uploads 目录
+        # 为什么：避免导入失败/重复时提前落盘产生垃圾文件
+        self.uploads_tmp_dir = self.uploads_dir / "_tmp_async_import"
+        self.uploads_tmp_dir.mkdir(parents=True, exist_ok=True)
         
         # 日志文件
         self.manifest_path = self.project_root / "data" / "import_manifest_async.jsonl"
@@ -285,10 +376,14 @@ class AsyncExcelImporter:
         except Exception:
             return False
     
-    async def _save_image_async(self, value: str, base_dir: Optional[Path] = None) -> str:
-        """异步保存图片并返回 image_url。支持：URL、本地路径、dataURI、多个值分隔。"""
+    async def _prepare_image_async(self, value: str, base_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+        """预取图片内容但不立即落盘，返回 {bytes, ext, fname, url}。
+
+        - 仅在 upsert 成功后才真正落盘，避免垃圾文件
+        - 支持：URL、本地路径、dataURI、多个值分隔
+        """
         if not value:
-            return ""
+            return None
         
         # 解析多个候选值（逗号/分号/换行/空格分隔）
         candidates = []
@@ -340,21 +435,63 @@ class AsyncExcelImporter:
                         ext = path.suffix or ".jpg"
                 
                 if content:
-                    # 生成唯一文件名
+                    # 生成唯一文件名（但不立即写入磁盘）
                     h = hashlib.md5(content).hexdigest()[:16]
                     fname = f"import_embed_{h}{ext}"
-                    dst = self.uploads_dir / fname
-                    
-                    if not dst.exists():
-                        async with aiofiles.open(dst, 'wb') as f:
-                            await f.write(content)
-                    
-                    return f"/static/uploads/{fname}"
+                    url = f"/static/uploads/{fname}"
+                    return {"bytes": content, "ext": ext, "fname": fname, "url": url}
                     
             except Exception:
                 continue
         
-        return ""
+        return None
+
+    async def _persist_image_bytes(self, data: Dict[str, Any]) -> Optional[str]:
+        """将预取的图片字节真正写入 uploads 目录，并返回最终 URL。"""
+        try:
+            if not data:
+                return None
+            fname = data.get("fname")
+            content: Optional[bytes] = data.get("bytes")
+            if not fname or not content:
+                return None
+            dst = self.uploads_dir / fname
+            if not dst.exists():
+                async with aiofiles.open(dst, 'wb') as f:
+                    await f.write(content)
+            return f"/static/uploads/{fname}"
+        except Exception:
+            return None
+
+    async def _finalize_tmp_image(self, tmp_path: str) -> Optional[str]:
+        """将临时目录中的图片移动到 uploads 目录，返回最终 URL。
+
+        - 用于 COM 导出的嵌入图片：先导出到 tmp，再在 upsert 成功后移动到正式目录
+        """
+        try:
+            if not tmp_path:
+                return None
+            src = Path(tmp_path)
+            if not src.exists():
+                return None
+            fname = src.name
+            dst = self.uploads_dir / fname
+            try:
+                # 原子移动/覆盖
+                os.replace(str(src), str(dst))
+            except Exception:
+                # 回退：复制后删除
+                async with aiofiles.open(src, 'rb') as rf:
+                    content = await rf.read()
+                async with aiofiles.open(dst, 'wb') as wf:
+                    await wf.write(content)
+                try:
+                    src.unlink()
+                except Exception:
+                    pass
+            return f"/static/uploads/{fname}"
+        except Exception:
+            return None
     
     def _extract_embedded_images(self, file_path: str, sheet: Any, df: pd.DataFrame, 
                                 image_col: Optional[str] = "图片") -> Dict[int, str]:
@@ -464,7 +601,8 @@ class AsyncExcelImporter:
                                     # 使用同步版的哈希策略
                                     h = hashlib.md5(f"{file_path}:{sheet}:shape:{r}:{c}:{getattr(shp,'Name','')}".encode('utf-8')).hexdigest()[:16]
                                     fname = f"import_shape_{h}.png"
-                                    dst = self.uploads_dir / fname
+                                    # 先导出到临时目录，成功后再移动
+                                    dst = self.uploads_tmp_dir / fname
                                     
                                     if not dst.exists():
                                         ch.Chart.Export(str(dst))
@@ -539,7 +677,8 @@ class AsyncExcelImporter:
                                     # 使用同步版的哈希策略
                                     h = hashlib.md5(f"{file_path}:{sheet}:{r}:{col_idx}".encode("utf-8")).hexdigest()[:16]
                                     fname = f"import_disp_{h}.png"
-                                    dst = self.uploads_dir / fname
+                                    # 先导出到临时目录，成功后再移动
+                                    dst = self.uploads_tmp_dir / fname
                                     
                                     # 导出图片
                                     if not dst.exists():
@@ -638,8 +777,9 @@ class AsyncExcelImporter:
                 })
                 return row_result
             
-            # 3. 处理图片（完整版）
+            # 3. 处理图片（改为“成功后再落盘”策略）
             image_url = ""
+            prepared_image: Optional[Dict[str, Any]] = None  # 保存预取的图片字节与目标文件名
             
             # 3.1 处理显式图片列
             img_val = str(row.get("图片", "") or "").strip()
@@ -649,11 +789,15 @@ class AsyncExcelImporter:
                 img_val = str(row.get(last_col_name, "") or "").strip()
             
             if img_val:
-                image_url = await self._save_image_async(img_val, base_dir=excel_dir)
+                prepared_image = await self._prepare_image_async(img_val, base_dir=excel_dir)
             
             # 3.2 如果没有显式图片，使用预提取的嵌入图片
-            if not image_url:
-                image_url = self.embedded_images.get(int(idx), "")
+            if not prepared_image and not image_url:
+                # 对于 COM 导出的嵌入图片：之前逻辑直接落盘。现在改为先导出到 tmp，再在成功后移动到正式目录。
+                tmp_url = self.embedded_images.get(int(idx), "")
+                if tmp_url:
+                    # 记录为临时路径（/static/uploads/xxx），我们会将对应的物理文件从 tmp 迁移到正式目录
+                    image_url = tmp_url
                 
                 # 行锚点校验：如果图片上方/下方2行内存在同名单位更匹配，则迁移归属
                 if image_url:
@@ -701,6 +845,7 @@ class AsyncExcelImporter:
                 "name": name,
                 "description": description,
                 "tags": tags,
+                # 若是预取的普通图片，先不填 image_url，成功后再补发更新或直接写入 URL
                 "image_url": image_url,
                 "address": address,
                 "lat": loc["lat"],
@@ -715,6 +860,29 @@ class AsyncExcelImporter:
             if success:
                 row_result["success"] = True
                 self.stats.add_success()
+                # 成功后再真正落盘图片
+                try:
+                    # 1) 普通图片（URL/本地/dataURI 预取）
+                    if prepared_image:
+                        final_url = await self._persist_image_bytes(prepared_image)
+                        if final_url and final_url != upsert_payload.get("image_url"):
+                            # 简单追加一次更新：直接再发 upsert_full（同键会覆盖）
+                            upd_payload = dict(upsert_payload)
+                            upd_payload["image_url"] = final_url
+                            await self._upsert_async(upd_payload)
+                    # 2) COM 嵌入图片：移动临时文件到正式 uploads
+                    elif image_url and image_url.startswith("/static/uploads/"):
+                        # 推断物理临时路径：tmp 目录下的同名文件
+                        fname = image_url.rsplit("/", 1)[-1]
+                        tmp_file = self.uploads_tmp_dir / fname
+                        if tmp_file.exists():
+                            moved_url = await self._finalize_tmp_image(str(tmp_file))
+                            if moved_url and moved_url != image_url:
+                                upd_payload = dict(upsert_payload)
+                                upd_payload["image_url"] = moved_url
+                                await self._upsert_async(upd_payload)
+                except Exception:
+                    pass
                 # 一旦首次成功写入，则认为索引已初始化
                 if not self.index_ready:
                     self.index_ready = True
