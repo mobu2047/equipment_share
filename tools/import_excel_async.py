@@ -951,6 +951,14 @@ class AsyncExcelImporter:
         # 1. 读取Excel文件
         try:
             df = pd.read_excel(file_path, sheet_name=sheet)
+            # 针对 Excel 合并单元格：很多表仅在组首行填“单位/地址/联系人”，其余行为空。
+            # 这里对关键列进行前向填充（仅空白/NaN 才填），保证每行具备完整“五要素”。
+            try:
+                # 仅对“单位名称”做前向填充，适配合并单元格导致的空白
+                if "单位名称" in df.columns:
+                    df["单位名称"] = df["单位名称"].replace(r"^\s*$", pd.NA, regex=True).ffill()
+            except Exception:
+                pass
             df = df.fillna("")
             self.stats.total = len(df)
             print(f"📋 读取到 {len(df)} 行数据")

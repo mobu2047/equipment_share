@@ -93,3 +93,65 @@ class BatchUpsertResponse(BaseModel):
     results: List[BatchUpsertResult]
 
 
+# ---------------- 新增：名称+metadata 高级搜索模型 ----------------
+class MetaFilterCondition(BaseModel):
+    """单个 metadata 过滤条件
+
+    说明：
+    - op 操作符：
+      - contains: 字符串包含（默认）
+      - eq/neq: 全等/不等（字符串或可解析数值）
+      - in: 候选值之一（value 需为数组）
+      - gt/gte/lt/lte: 数值比较（自动从字符串中提取数值进行比较）
+      - range: 数值区间（闭区间），使用 min/max
+      - exists: 字段存在且非空
+    - value/min/max 支持字符串或数值。数值类操作会尽量从字符串中解析浮点数
+    """
+
+    op: str = Field("contains", description="操作符: contains|eq|neq|in|gt|gte|lt|lte|range|exists")
+    value: Optional[Any] = Field(None, description="用于 contains/eq/neq/in 的比较值")
+    min: Optional[float] = Field(None, description="用于 range 的最小值")
+    max: Optional[float] = Field(None, description="用于 range 的最大值")
+
+
+class SearchByMetaRequest(BaseModel):
+    """基于名称与 metadata 的多维度搜索请求
+
+    字段说明：
+    - name: 名称关键词，支持 exact/contains/fuzzy 三种匹配
+    - metadata_filters: 多字段过滤条件（key=元数据字段名，value=MetaFilterCondition）
+    - logic: 字段间逻辑 AND|OR（默认 AND）
+    - match_mode: 名称匹配模式 exact|contains|fuzzy（默认 fuzzy）
+    - min_score: 最小相关性阈值(0~1)，仅 fuzzy 模式有效（默认 0）
+    - sort: 排序 {field, order}，field=relevance|name（默认 relevance desc）
+    - page/size: 分页参数（size 最大 200）
+    """
+
+    name: Optional[str] = Field(None, description="名称关键词")
+    metadata_filters: Optional[Dict[str, MetaFilterCondition]] = Field(
+        default_factory=dict, description="metadata 过滤条件集合"
+    )
+    logic: str = Field("AND", description="字段间逻辑: AND|OR")
+    match_mode: str = Field("fuzzy", description="名称匹配: exact|contains|fuzzy")
+    min_score: float = Field(0.0, ge=0.0, le=1.0, description="最小相关性阈值，仅 fuzzy 有效")
+    sort: Dict[str, str] = Field(
+        default_factory=lambda: {"field": "relevance", "order": "desc"},
+        description="排序设置"
+    )
+    page: int = Field(1, ge=1)
+    size: int = Field(20, ge=1, le=200)
+
+
+class SearchByMetaResponse(BaseModel):
+    """基于名称与 metadata 的搜索响应
+
+    返回结构与 /api/rag/items 保持一致：包含分页信息与 items 列表；
+    items 中将包含 score 字段（0~1），用于前端可选展示排序依据。
+    """
+
+    total: int
+    page: int
+    size: int
+    items: List[Dict[str, Any]]
+
+

@@ -42,7 +42,8 @@ from backend.core.logger import logger
 from backend.core.config import get_settings
 from backend.models.schemas import (
     UpsertFullRequest, ItemResponse, RecommendResponse, EquipmentItem,
-    BatchUpsertRequest, BatchUpsertResponse, BatchUpsertResult
+    BatchUpsertRequest, BatchUpsertResponse, BatchUpsertResult,
+    SearchByMetaRequest, SearchByMetaResponse
 )
 from backend.services.embeddings_client import EmbeddingsClient
 from backend.services.rag_store_faiss import RagStoreFaiss
@@ -368,6 +369,19 @@ async def api_delete_item(item_id: str) -> Dict[str, Any]:
     store = RagStoreFaiss()
     ok = store.delete(item_id)
     return {"deleted": bool(ok), "id": item_id}
+
+
+async def api_search_by_meta(req: SearchByMetaRequest) -> Dict[str, Any]:
+    """名称 + metadata 多维度搜索（模糊/精确），支持分页与排序。
+
+    说明：
+    - 不依赖向量检索，仅在内存条目上基于结构化字段进行筛选和评分
+    - 支持名称匹配模式：exact | contains | fuzzy（默认 fuzzy）
+    - 支持 metadata 多字段过滤（AND/OR 组合、数值区间、in/contains 等）
+    - 返回结构与 /api/rag/items 一致：{ total,page,size,items[] }
+    """
+    store = RagStoreFaiss()
+    return store.search_by_name_and_metadata(req)
 
 
 # -------------------------- 路由定义 --------------------------
@@ -698,4 +712,92 @@ async def http_clear_all(options: Optional[Dict[str, Any]] = None) -> Dict[str, 
         logger.error("clear_all.error", extra={"event": "clear_all_error", "error": str(e)})
         raise HTTPException(status_code=500, detail=f"清空数据失败: {str(e)}")
 
+
+@router.post("/search_by_meta", response_model=SearchByMetaResponse)
+async def http_search_by_meta(req: SearchByMetaRequest) -> dict:
+    """名称 + metadata 高级搜索接口
+
+    使用方式（Postman 或 curl）：
+    1) 模糊匹配名称 + 多字段 contains 过滤：
+       curl -X POST ${HOST}/api/rag/search_by_meta \
+            -H "Content-Type: application/json" \
+            -d '{
+                  "name": "扫描电镜",
+                  "match_mode": "fuzzy",
+                  "min_score": 0.55,
+                  "metadata_filters": {
+                    "单位名称": {"op": "contains", "value": "工业大学"},
+                    "测试项目": {"op": "in", "value": ["形貌观察", "能谱分析"]}
+                  },
+                  "logic": "AND",
+                  "sort": {"field": "relevance", "order": "desc"},
+                  "page": 1,
+                  "size": 20
+                }'
+
+    2) 仅 metadata 数值区间过滤（不传 name）：
+       curl -X POST ${HOST}/api/rag/search_by_meta \
+            -H "Content-Type: application/json" \
+            -d '{
+                  "metadata_filters": {
+                    "加速电压": {"op": "range", "min": 5, "max": 30}
+                  },
+                  "page": 1,
+                  "size": 10
+                }'
+
+    3) 名称 contains 精确包含匹配 + OR 逻辑：
+       curl -X POST ${HOST}/api/rag/search_by_meta \
+            -H "Content-Type: application/json" \
+            -d '{
+                  "name": "显微镜",
+                  "match_mode": "contains",
+                  "metadata_filters": {
+                    "单位名称": {"op": "contains", "value": "研究院"},
+                    "测试项目": {"op": "contains", "value": "XRD"}
+                  },
+                  "logic": "OR",
+                  "page": 1,
+                  "size": 15
+                }'
+
+    返回示例：
+    {
+      "total": 156,
+      "page": 1,
+      "size": 20,
+      "items": [
+        {
+          "id": "...",
+          "name": "扫描电子显微镜(SEM)",
+          "description": "...",
+          "tags": ["sem", "microscopy"],
+          "image_url": "/static/uploads/xxx.png",
+          "address": "...",
+          "lat": 28.2,
+          "lng": 112.9,
+          "metadata": {"单位名称": "湖南工业大学", "测试项目": ["形貌观察", "能谱分析"]},
+          "quantity": 1,
+          "score": 0.86
+        }
+      ]
+    }
+    """
+    try:
+        logger.info(
+            "api.search_by_meta.request",
+            extra={
+                "event": "search_by_meta",
+                "has_name": bool(req.name),
+                "filters_count": len(req.metadata_filters or {}),
+                "logic": (req.logic or "AND"),
+                "match_mode": (req.match_mode or "fuzzy"),
+                "page": req.page,
+                "size": req.size,
+            },
+        )
+        return await api_search_by_meta(req)
+    except Exception as e:
+        logger.error("api.search_by_meta.error", extra={"event": "search_by_meta_error", "error": str(e)})
+        raise HTTPException(status_code=500, detail=str(e))
 
