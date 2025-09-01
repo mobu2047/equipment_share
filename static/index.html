@@ -7,57 +7,55 @@
     <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-    <!-- 页面主容器：包含输入区、对话结果、设备推荐卡片位 -->
-    <div class="container">
-        <h1>实验设备共享平台</h1>
+    <div class="app-container">
+        <!-- 左侧主要内容区域 -->
+        <div class="main-content">
+            <header class="header">
+                <h1>🔬 株洲高新区实验设备共享平台智能助手</h1>
+                <p class="subtitle">智能推荐，精准匹配您的实验需求</p>
+            </header>
 
-        <section class="location-section">
-            <h2>位置信息</h2>
-            <div class="location-box">
-                <button id="locationBtn" class="location-btn">获取位置</button>
-                <div id="locationInfo" class="location-info">点击获取您的当前位置，以便推荐附近的设备</div>
-            </div>
-        </section>
-
-        <section class="chat-section">
-            <h2>对话</h2>
-            <div class="chat-box">
-                <textarea id="prompt" placeholder="请输入实验描述或向模型提问……"></textarea>
-                <button id="sendBtn">发送</button>
-            </div>
-            <div id="reply" class="reply"></div>
-        </section>
-
-        <section class="recommend-section">
-            <h2>设备推荐</h2>
-            <div class="cards">
-                <!-- 预留 3 个图片+文字位置，初始使用占位图 -->
-                <div class="card" id="card1">
-                    <img src="/static/assets/placeholder1.svg" alt="设备1" />
-                    <div class="card-body">
-                        <h3 class="card-title">设备位 1</h3>
-                        <p class="card-desc">等待推荐…</p>
-                    </div>
+            <section class="location-section">
+                <h2>📍 位置信息</h2>
+                <div class="location-box">
+                    <button id="locationBtn" class="location-btn">获取位置</button>
+                    <div id="locationInfo" class="location-info">点击获取您的当前位置，以便推荐附近的设备</div>
                 </div>
-                <div class="card" id="card2">
-                    <img src="/static/assets/placeholder2.svg" alt="设备2" />
-                    <div class="card-body">
-                        <h3 class="card-title">设备位 2</h3>
-                        <p class="card-desc">等待推荐…</p>
-                    </div>
+            </section>
+
+            <section class="chat-section">
+                <h2>💬 智能问答</h2>
+                <div class="chat-box">
+                    <textarea id="prompt" placeholder="请描述您的实验需求，例如：我需要进行蛋白质纯化实验，需要什么设备？"></textarea>
+                    <button id="sendBtn" class="send-btn">
+                        <span class="btn-text">发送查询</span>
+                        <span class="btn-icon">→</span>
+                    </button>
                 </div>
-                <div class="card" id="card3">
-                    <img src="/static/assets/placeholder3.svg" alt="设备3" />
-                    <div class="card-body">
-                        <h3 class="card-title">设备位 3</h3>
-                        <p class="card-desc">等待推荐…</p>
+                <div id="reply" class="reply"></div>
+            </section>
+        </div>
+
+        <!-- 右侧推荐卡片区域 -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>🎯 设备推荐</h2>
+                <div class="card-count">找到 <span id="cardCount">0</span> 个匹配设备</div>
+            </div>
+            
+            <div class="cards-container" id="cardsContainer">
+                <div class="cards-scroll">
+                    <!-- 推荐卡片将动态插入这里 -->
+                    <div class="empty-state">
+                        <div class="empty-icon">🔍</div>
+                        <p>请输入实验需求，获取设备推荐</p>
                     </div>
                 </div>
             </div>
-        </section>
+        </div>
     </div>
 
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=4"></script>
 </body>
 </html>
 

@@ -1,24 +1,19 @@
-// 前端逻辑：向后端发送对话与推荐请求，并更新页面
+// 实验设备共享平台 - 前端交互逻辑
 
 (function () {
-    // 为什么自执行函数：
-    // - 避免全局变量污染
-    // - 在 DOMReady 后立即绑定事件
-
+    // DOM 元素
     const promptEl = document.getElementById('prompt');
     const sendBtn = document.getElementById('sendBtn');
     const replyEl = document.getElementById('reply');
     const locationBtn = document.getElementById('locationBtn');
     const locationInfo = document.getElementById('locationInfo');
-
-
-
-    // 卡片位：用于填充后端的推荐结果
-    const cards = [
-        document.getElementById('card1'),
-        document.getElementById('card2'),
-        document.getElementById('card3'),
-    ];
+    const cardsContainer = document.getElementById('cardsContainer');
+    const cardCount = document.getElementById('cardCount');
+    
+    // 应用状态
+    let currentEquipmentList = [];
+    let userLocation = null;
+    let maxResults = 3; // 默认显示3个推荐结果
 
     async function postJson(url, data) {
         // 封装 fetch，统一 headers 与错误处理
@@ -34,123 +29,147 @@
         return resp.json();
     }
 
+    // 创建设备卡片HTML
+    function createEquipmentCard(item, index) {
+        const imageUrl = item.image_url || '/static/assets/placeholder1.svg';
+        const tags = (item.tags || []).slice(0, 3); // 最多显示3个标签
+        
+        return `
+            <div class="equipment-card" data-id="${item.id || index}">
+                <img src="${imageUrl}" alt="${item.name}" onerror="this.src='/static/assets/placeholder1.svg'">
+                <div class="card-body">
+                    <h3 class="card-title">${item.name}</h3>
+                    <p class="card-desc">${item.description || '暂无描述'}</p>
+                    <div class="card-meta">
+                        ${item.quantity ? `<span class="meta-item primary">数量: ${item.quantity}</span>` : ''}
+                        ${item.address ? `<span class="meta-item">📍 ${item.address}</span>` : ''}
+                        ${tags.map(tag => `<span class="meta-item">${tag}</span>`).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // 更新推荐卡片区域
+    function updateEquipmentCards(items) {
+        currentEquipmentList = items || [];
+        const scrollContainer = cardsContainer.querySelector('.cards-scroll');
+        
+        // 更新计数
+        cardCount.textContent = currentEquipmentList.length;
+        
+        if (currentEquipmentList.length === 0) {
+            scrollContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">🔍</div>
+                    <p>暂无匹配的设备推荐</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // 生成卡片HTML
+        const cardsHtml = currentEquipmentList
+            .map((item, index) => createEquipmentCard(item, index))
+            .join('');
+        
+        scrollContainer.innerHTML = cardsHtml;
+        
+        // 滚动到顶部
+        scrollContainer.scrollTop = 0;
+    }
+
+    // 设置按钮加载状态
+    function setButtonLoading(button, loading, originalText = '发送查询') {
+        if (loading) {
+            button.disabled = true;
+            // 只在第一次保存原始文本
+            if (!button.dataset.originalText) {
+                const textSpan = button.querySelector('.btn-text');
+                button.dataset.originalText = textSpan ? textSpan.textContent : originalText;
+            }
+            button.innerHTML = `
+                <span class="btn-text">处理中...</span>
+                <span class="btn-icon">⏳</span>
+            `;
+        } else {
+            button.disabled = false;
+            const text = button.dataset.originalText || originalText;
+            button.innerHTML = `
+                <span class="btn-text">${text}</span>
+                <span class="btn-icon">→</span>
+            `;
+        }
+    }
+
+    // 主查询处理函数
     async function handleSend() {
         const text = (promptEl.value || '').trim();
         if (!text) {
-            replyEl.textContent = '请输入内容';
+            replyEl.textContent = '请输入实验需求描述';
             return;
         }
 
-        replyEl.textContent = '思考中…';
+        // 设置加载状态
+        setButtonLoading(sendBtn, true, '发送查询');
+        replyEl.textContent = '🤖 正在分析您的需求，请稍候...';
+        updateEquipmentCards([]); // 清空之前的结果
 
         try {
-            // 强制优先使用 RAG 问答
-            const ragResp = await fetch('/api/rag/ask?query=' + encodeURIComponent(text) + '&top_k=3', { method: 'POST' });
+            // 优先使用 RAG 问答
+            const ragResp = await fetch('/api/rag/ask?query=' + encodeURIComponent(text) + '&top_k=' + maxResults, { 
+                method: 'POST' 
+            });
+            
             if (!ragResp.ok) throw new Error(await ragResp.text());
             const rag = await ragResp.json();
 
-            // 1) 展示答案
+            // 显示答案
             let answerText = rag.answer || '';
-
-            // 2) 设备列表（优先用 ask 的 recommendations/sources）
             let items = (rag && (rag.recommendations || rag.sources)) || [];
 
-            // 如 RAG 未返回设备，则回退一次简单推荐以填充卡片
+            // 如果RAG没有返回设备，尝试简单推荐
             if (!items.length) {
                 try {
                     const recommendResp = await fetch('/api/recommend', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ experiment: text })
+                        body: JSON.stringify({ 
+                            experiment: text,
+                            user_location: userLocation 
+                        })
                     });
                     if (recommendResp.ok) {
                         const recommendData = await recommendResp.json();
                         items = (recommendData && recommendData.items) || [];
                     }
-                } catch (_) { /* ignore */ }
-            }
-
-            // 3) 在答案下方追加设备详情
-            if (items.length) {
-                const lines = ['','设备详情：'];
-                for (let i = 0; i < items.length; i++) {
-                    const it = items[i];
-                    let itemInfo = `- [${i + 1}] 名称: ${it.name}`;
-                    if (typeof it.quantity === 'number') {
-                        itemInfo += ` | 台数: ${it.quantity}`;
-                    }
-                    if (typeof it.lat === 'number' && typeof it.lng === 'number') {
-                        itemInfo += ` (${it.lat.toFixed(6)}, ${it.lng.toFixed(6)})`;
-                    }
-                    if (it.address) {
-                        itemInfo += ` | 地址: ${it.address}`;
-                    }
-                    if (it.tags && it.tags.length) {
-                        itemInfo += ` | 标签: ${it.tags.join(', ')}`;
-                    }
-                    lines.push(itemInfo);
-                }
-                answerText = (answerText ? answerText + '\n\n' : '') + lines.join('\n');
-            }
-
-            replyEl.textContent = answerText || '未找到相关设备推荐';
-
-            // 4) 更新卡片
-            for (let i = 0; i < cards.length; i++) {
-                const card = cards[i];
-                const item = items[i];
-                const img = card.querySelector('img');
-                const title = card.querySelector('.card-title');
-                const desc = card.querySelector('.card-desc');
-                if (item) {
-                    if (item.image_url) {
-                        img.src = item.image_url + (item.image_url.includes('?') ? '&' : '?') + 't=' + Date.now();
-                    }
-                    title.textContent = item.name || `设备位 ${i + 1}`;
-                    let descText = item.description || '';
-                    if (typeof item.quantity === 'number') descText += `\n🧰 台数: ${item.quantity}`;
-                    if (item.address) descText += `\n📍 ${item.address}`;
-                    if (typeof item.lat === 'number' && typeof item.lng === 'number') {
-                        descText += ` (${item.lat.toFixed(6)}, ${item.lng.toFixed(6)})`;
-                    }
-                    if (item.tags) descText += ` [${item.tags.join(', ')}]`;
-                    desc.textContent = descText;
-                } else {
-                    title.textContent = `设备位 ${i + 1}`;
-                    desc.textContent = '等待推荐…';
+                } catch (e) {
+                    console.warn('推荐接口调用失败:', e);
                 }
             }
+
+            // 显示结果
+            replyEl.textContent = answerText || '✅ 查询完成，请查看右侧推荐设备';
+            updateEquipmentCards(items);
+
         } catch (err) {
-            // 回退：使用原有对话+简单推荐
+            console.error('查询失败:', err);
+            
+            // 回退处理
             try {
                 const chat = await postJson('/api/chat', { prompt: text });
-                replyEl.textContent = chat.reply || '';
-            } catch (_) { /* 忽略 */ }
-            try {
-                const rec = await postJson('/api/recommend', { experiment: text });
-                const items = (rec && rec.items) || [];
-                for (let i = 0; i < cards.length; i++) {
-                    const card = cards[i];
-                    const item = items[i];
-                    const img = card.querySelector('img');
-                    const title = card.querySelector('.card-title');
-                    const desc = card.querySelector('.card-desc');
-                    if (item) {
-                        img.src = item.image_url || img.src;
-                        title.textContent = item.name || `设备位 ${i + 1}`;
-                        desc.textContent = (item.description || '') + (item.tags ? ` [${item.tags.join(', ')}` : '');
-                    }
-                }
-            } catch (_) { /* 忽略 */ }
-            if (replyEl.textContent === '思考中…') {
-                replyEl.textContent = '请求失败：' + (err && err.message ? err.message : '未知错误');
+                replyEl.textContent = chat.reply || '抱歉，暂时无法处理您的请求';
+            } catch (_) {
+                replyEl.textContent = '❌ 请求失败: ' + (err.message || '网络连接异常，请稍后重试');
             }
+            
+            updateEquipmentCards([]);
+        } finally {
+            setButtonLoading(sendBtn, false, '发送查询');
         }
     }
 
-    // 用户位置相关
-    let userLocation = null;
-
+    // 地理位置相关函数
     async function getUserLocation() {
         return new Promise((resolve, reject) => {
             if (!navigator.geolocation) {
@@ -246,10 +265,36 @@
         }
     }
 
-    // 事件绑定
-    sendBtn.addEventListener('click', handleSend);
-    if (locationBtn) {
-        locationBtn.addEventListener('click', handleLocationClick);
+    // 键盘事件处理
+    promptEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            handleSend();
+        }
+    });
+
+    // 初始化
+    function init() {
+        // 显示初始状态
+        updateEquipmentCards([]);
+        
+        // 绑定事件
+        sendBtn.addEventListener('click', handleSend);
+        if (locationBtn) {
+            locationBtn.addEventListener('click', handleLocationClick);
+        }
+        
+        // 聚焦到输入框
+        if (promptEl) {
+            promptEl.focus();
+        }
+    }
+
+    // 页面加载完成后初始化
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 })();
 
