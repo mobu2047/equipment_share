@@ -30,6 +30,7 @@ class ForumThread(Base):
     category: Mapped[str] = mapped_column(String(32), default="general", nullable=False)
     lease_order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("lease_orders.id", ondelete="SET NULL"))
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    attachments_json: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -46,6 +47,7 @@ class ForumPost(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     parent_post_id: Mapped[Optional[int]] = mapped_column(ForeignKey("forum_posts.id", ondelete="SET NULL"))
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    attachments_json: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

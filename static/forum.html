@@ -20,6 +20,7 @@
     <div class="card">
       <div class="row"><input id="title" placeholder="标题" /></div>
       <div class="row"><textarea id="content" placeholder="内容"></textarea></div>
+      <div class="row"><input type="file" id="images" accept="image/*" multiple /></div>
       <div class="row"><input id="category" placeholder="分类(可空, 默认general)" /><input id="lease_id" placeholder="绑定租赁单ID(可空)" /></div>
       <div class="row" style="justify-content:flex-end"><button class="btn" id="create">发帖</button></div>
       <div id="msg"></div>
@@ -53,15 +54,35 @@
       return resp.json();
     }
 
+    async function uploadOne(file){
+      const form = new FormData();
+      form.append('file', file);
+      const resp = await fetch('/api/v1/forum/uploads', { method:'POST', headers: { 'Authorization': 'Bearer ' + token() }, body: form });
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp.json();
+    }
+
+    // 将关键方法挂到 window，供弹出页稳定调用
+    window.api = api;
+    window.uploadOne = uploadOne;
+
     document.getElementById('create').addEventListener('click', async () => {
       try{
         const leaseRaw = document.getElementById('lease_id').value.trim();
         const leaseId = leaseRaw ? Number(leaseRaw) : null;
+        // 上传选中的图片
+        const files = document.getElementById('images').files;
+        const urls = [];
+        for (const f of files){
+          const r = await uploadOne(f);
+          if (r && r.url) urls.push(r.url);
+        }
         const body = {
           title: document.getElementById('title').value.trim(),
           content: document.getElementById('content').value.trim(),
           category: document.getElementById('category').value.trim() || 'general',
           lease_order_id: Number.isFinite(leaseId) ? leaseId : null,
+          attachments: urls,
         };
         if(!body.title || !body.content) return setMsg('请输入标题与内容');
         const data = await api('/api/v1/forum/threads', 'POST', body);
@@ -93,19 +114,33 @@
       const area = document.createElement('div');
       area.innerHTML = `<div style="padding:8px 0"><b>帖子 #${data.id}</b> | 作者: ${data.author_user_id} | 分类: ${data.category} ${data.lease_order_id?(' | 租赁#'+data.lease_order_id):''}</div>
       <div style="margin:6px 0">标题: ${data.title}</div>
+      ${(data.attachments||[]).map(u=>`<div><img src='${u}' style='max-width:100%;border:1px solid var(--border);margin:4px 0'/></div>`).join('')}
       <div style="margin:10px 0"><textarea id="reply_${data.id}" style="width:100%;min-height:80px" placeholder="回复内容"></textarea></div>
+      <div class="row"><input type="file" id="reply_images_${data.id}" accept="image/*" multiple /></div>
       <div><button class="btn" id="send_reply_${data.id}">提交回复</button></div>
       <div style="margin-top:10px"><b>回复列表(${data.posts.length})</b></div>
-      <div>${data.posts.map(p=>`<div style='border-bottom:1px solid var(--border);padding:6px 0'>#${p.id} | 作者:${p.author_user_id} | ${p.created_at}<br/>${p.content}<br/><button class='btn' onclick='delPost(${p.id})'>删除回复</button></div>`).join('')}</div>`;
+      <div>${data.posts.map(p=>`<div style='border-bottom:1px solid var(--border);padding:6px 0'>#${p.id} | 作者:${p.author_user_id} | ${p.created_at}<br/>${p.content}<br/>${(p.attachments||[]).map(u=>`<div><img src='${u}' style='max-width:100%;border:1px solid var(--border);margin:4px 0'/></div>`).join('')}<button class='btn' onclick='window.opener.delPost(${p.id})'>删除回复</button></div>`).join('')}</div>`;
       const w = window.open('', '_blank');
       w.document.write('<html><head><link rel="stylesheet" href="/static/styles.css" /></head><body></body></html>');
       w.document.body.appendChild(area);
       w.document.getElementById('send_reply_'+data.id).addEventListener('click', async ()=>{
         const content = w.document.getElementById('reply_'+data.id).value.trim();
         if (!content) return alert('请输入内容');
-        await api(`/api/v1/forum/threads/${data.id}/posts`, 'POST', { content });
+        // 上传回复图片
+        const files = w.document.getElementById('reply_images_'+data.id).files;
+        const urls = [];
+        for (const f of files){
+          const r = await window.opener.uploadOne(f);
+          if (r && r.url) urls.push(r.url);
+        }
+        try {
+          await window.opener.api(`/api/v1/forum/threads/${data.id}/posts`, 'POST', { content, attachments: urls });
+        } catch (e) {
+          alert('回复失败: ' + e);
+          return;
+        }
         w.close();
-        await load();
+        await window.opener.load();
       });
     }
 

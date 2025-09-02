@@ -276,6 +276,7 @@ class ThreadCreateRequest(BaseModel):
     content: str
     category: str = Field("general")
     lease_order_id: Optional[int] = None
+    attachments: Optional[List[str]] = Field(default_factory=list, description="帖子首帖的图片URL列表")
 
 
 class ThreadListResponse(BaseModel):
@@ -288,4 +289,5 @@ class ThreadListResponse(BaseModel):
 class PostCreateRequest(BaseModel):
     content: str
     parent_post_id: Optional[int] = None
+    attachments: Optional[List[str]] = Field(default_factory=list, description="图片URL列表")
 

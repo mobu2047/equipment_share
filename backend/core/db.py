@@ -132,4 +132,25 @@ def init_db() -> None:
         # 初始化失败不影响服务启动；后续在角色绑定时再补种
         pass
 
+    # 5) 简单迁移：论坛表新增 attachments_json
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE forum_threads ADD COLUMN IF NOT EXISTS attachments_json TEXT"))
+            conn.execute(text("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS attachments_json TEXT"))
+            conn.commit()
+    except Exception:
+        # MySQL 8.0 不支持 IF NOT EXISTS for ADD COLUMN，回退为探测列是否存在
+        try:
+            with engine.connect() as conn:
+                # 检测 forum_threads.attachments_json
+                res = conn.execute(text("SHOW COLUMNS FROM forum_threads LIKE 'attachments_json'"))
+                if res.fetchone() is None:
+                    conn.execute(text("ALTER TABLE forum_threads ADD COLUMN attachments_json TEXT"))
+                res = conn.execute(text("SHOW COLUMNS FROM forum_posts LIKE 'attachments_json'"))
+                if res.fetchone() is None:
+                    conn.execute(text("ALTER TABLE forum_posts ADD COLUMN attachments_json TEXT"))
+                conn.commit()
+        except Exception:
+            pass
+
 

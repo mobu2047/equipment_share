@@ -59,6 +59,12 @@ class Settings(BaseModel):
     # 默认管理员（开发用）。填写手机号后，首次登录将自动授予 ADMIN 角色
     admin_default_phone: str = Field(default="000000", description="开发模式默认管理员手机号（留空则不启用）")
 
+    # 论坛上传限制
+    forum_upload_max_mb: int = Field(default=10, description="论坛图片单图最大体积(MB)")
+    forum_allowed_content_types: list[str] = Field(default_factory=lambda: [
+        "image/jpeg", "image/png", "image/webp", "image/gif"
+    ], description="允许的图片 MIME 类型")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -96,6 +102,9 @@ def get_settings() -> Settings:
         rate_limit_verify="10/min",
         # 默认管理员手机号（开发）
         admin_default_phone="000000",
+        # 论坛上传限制
+        forum_upload_max_mb=5,
+        forum_allowed_content_types=["image/jpeg", "image/png", "image/webp", "image/gif"],
     )
 
 
