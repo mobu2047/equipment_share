@@ -978,7 +978,8 @@ class AsyncExcelImporter:
         
         # 2.5. 根据模式选择是否清空与删图（覆盖导入前置操作）
         if self.mode == "overwrite":
-            print("🗑️  覆盖模式：清空现有数据和FAISS索引，并清理导入图片...")
+            
+            
             try:
                 async with self._session.post(
                     f"{self.api_base}/api/rag/clear_all",

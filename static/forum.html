@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>论坛测试</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .wrap { max-width: 900px; margin: 30px auto; }
+    .card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+    .row { display:flex; gap:8px; margin:8px 0; }
+    input, textarea { flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:8px; }
+    .btn { padding: 8px 12px; background: var(--primary); color:#fff; border:none; border-radius:8px; cursor:pointer; }
+    .thread { border-bottom:1px solid var(--border); padding:8px 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2 style="margin-bottom:12px">论坛（需要 Authorization: Bearer <access_token>）</h2>
+    <div class="card">
+      <div class="row"><input id="title" placeholder="标题" /></div>
+      <div class="row"><textarea id="content" placeholder="内容"></textarea></div>
+      <div class="row"><input id="category" placeholder="分类(可空, 默认general)" /><input id="lease_id" placeholder="绑定租赁单ID(可空)" /></div>
+      <div class="row" style="justify-content:flex-end"><button class="btn" id="create">发帖</button></div>
+      <div id="msg"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><input id="filter_category" placeholder="分类(可空)" /><input id="filter_lease" placeholder="租赁单ID(可空)" /><button class="btn" id="load">加载列表</button></div>
+      <div id="list"></div>
+    </div>
+    <div><a href="/">返回首页</a></div>
+  </div>
+
+  <script>
+    function token(){ return localStorage.getItem('access_token') || ''; }
+    function setToken(tok){ localStorage.setItem('access_token', tok || ''); }
+    function setMsg(t){ document.getElementById('msg').textContent = t; }
+    async function refreshAccess(){
+      const r = await fetch('/api/v1/auth/refresh', { method:'POST' });
+      if (!r.ok) throw new Error('刷新凭据失败');
+      const data = await r.json();
+      if (data && data.access_token) setToken(data.access_token);
+      return data;
+    }
+    async function api(path, method='GET', body){
+      let resp = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() }, body: body?JSON.stringify(body):undefined });
+      if (resp.status === 401){
+        try{ await refreshAccess(); }catch(_){ throw new Error('未登录或会话已过期'); }
+        resp = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() }, body: body?JSON.stringify(body):undefined });
+      }
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp.json();
+    }
+
+    document.getElementById('create').addEventListener('click', async () => {
+      try{
+        const leaseRaw = document.getElementById('lease_id').value.trim();
+        const leaseId = leaseRaw ? Number(leaseRaw) : null;
+        const body = {
+          title: document.getElementById('title').value.trim(),
+          content: document.getElementById('content').value.trim(),
+          category: document.getElementById('category').value.trim() || 'general',
+          lease_order_id: Number.isFinite(leaseId) ? leaseId : null,
+        };
+        if(!body.title || !body.content) return setMsg('请输入标题与内容');
+        const data = await api('/api/v1/forum/threads', 'POST', body);
+        setMsg('创建成功: #' + data.id);
+        await load();
+      }catch(e){ setMsg('失败: ' + e); }
+    });
+
+    async function load(){
+      const category = document.getElementById('filter_category').value.trim();
+      const lease = document.getElementById('filter_lease').value.trim();
+      const qs = [];
+      if(category) qs.push('category='+encodeURIComponent(category));
+      if(lease) qs.push('lease_order_id='+encodeURIComponent(lease));
+      const q = qs.length?('?'+qs.join('&')):'';
+      const data = await api('/api/v1/forum/threads' + q);
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+      for (const it of (data.items||[])){
+        const div = document.createElement('div');
+        div.className = 'thread';
+        div.innerHTML = `<div><b>#${it.id}</b> ${it.title} <small>作者:${it.author_user_id} ${it.category||''}${it.lease_order_id?(' | 绑定租赁#'+it.lease_order_id):''}</small></div>
+        <div><button class="btn" onclick="detail(${it.id})">查看</button> <button class="btn" onclick="delThread(${it.id})">删除主题</button></div>`;
+        list.appendChild(div);
+      }
+    }
+    window.detail = async function(id){
+      const data = await api('/api/v1/forum/threads/'+id);
+      const area = document.createElement('div');
+      area.innerHTML = `<div style="padding:8px 0"><b>帖子 #${data.id}</b> | 作者: ${data.author_user_id} | 分类: ${data.category} ${data.lease_order_id?(' | 租赁#'+data.lease_order_id):''}</div>
+      <div style="margin:6px 0">标题: ${data.title}</div>
+      <div style="margin:10px 0"><textarea id="reply_${data.id}" style="width:100%;min-height:80px" placeholder="回复内容"></textarea></div>
+      <div><button class="btn" id="send_reply_${data.id}">提交回复</button></div>
+      <div style="margin-top:10px"><b>回复列表(${data.posts.length})</b></div>
+      <div>${data.posts.map(p=>`<div style='border-bottom:1px solid var(--border);padding:6px 0'>#${p.id} | 作者:${p.author_user_id} | ${p.created_at}<br/>${p.content}<br/><button class='btn' onclick='delPost(${p.id})'>删除回复</button></div>`).join('')}</div>`;
+      const w = window.open('', '_blank');
+      w.document.write('<html><head><link rel="stylesheet" href="/static/styles.css" /></head><body></body></html>');
+      w.document.body.appendChild(area);
+      w.document.getElementById('send_reply_'+data.id).addEventListener('click', async ()=>{
+        const content = w.document.getElementById('reply_'+data.id).value.trim();
+        if (!content) return alert('请输入内容');
+        await api(`/api/v1/forum/threads/${data.id}/posts`, 'POST', { content });
+        w.close();
+        await load();
+      });
+    }
+
+    window.delThread = async function(id){ try{ await api(`/api/v1/forum/threads/${id}`, 'DELETE'); await load(); }catch(e){ alert(e); } }
+    window.delPost = async function(id){ try{ await api(`/api/v1/forum/posts/${id}`, 'DELETE'); await load(); }catch(e){ alert(e); } }
+
+    document.getElementById('load').addEventListener('click', load);
+    load();
+  </script>
+</body>
+</html>
+
+

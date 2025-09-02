@@ -716,6 +716,22 @@ async def http_clear_all(options: Optional[Dict[str, Any]] = None) -> Dict[str, 
 @router.post("/search_by_meta", response_model=SearchByMetaResponse)
 async def http_search_by_meta(req: SearchByMetaRequest) -> dict:
     """名称 + metadata 高级搜索接口
+    name:
+    名称关键词
+    match_mode: exact | contains | fuzzy（默认 fuzzy）
+    min_score: 仅在 fuzzy 模式下生效（0~1）
+    metadata_filters: 键为元数据字段名，值为条件对象：
+    op: contains(默认) | eq | neq | in | gt | gte | lt | lte | range | exists
+    value: 用于 contains/eq/neq/in
+    min/max: 用于 range
+    logic: 字段间逻辑 AND | OR（默认 AND）
+    sort: {"field": "relevance"|"name", "order": "asc"|"desc"}
+    page/size: 分页，size 最大 200
+    
+    返回结构
+    total: 命中条目总数
+    page/size: 分页信息
+    items: 列表项含 id, name, description, tags, image_url, address, lat, lng, metadata, quantity, score
 
     使用方式（Postman 或 curl）：
     1) 模糊匹配名称 + 多字段 contains 过滤：
@@ -801,3 +817,15 @@ async def http_search_by_meta(req: SearchByMetaRequest) -> dict:
         logger.error("api.search_by_meta.error", extra={"event": "search_by_meta_error", "error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# -------------------------- 聚合其他模块路由（方案A） --------------------------
+from backend.routers.auth import router as auth_router  # noqa: E402
+from backend.routers.lease import router as lease_router  # noqa: E402
+from backend.routers.forum import router as forum_router  # noqa: E402
+
+# 导出统一聚合路由，供 main.py 统一注册
+api_router = APIRouter()
+api_router.include_router(router)  # 本文件 RAG 路由
+api_router.include_router(auth_router)
+api_router.include_router(lease_router)
+api_router.include_router(forum_router)

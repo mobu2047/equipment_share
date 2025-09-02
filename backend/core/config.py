@@ -35,6 +35,30 @@ class Settings(BaseModel):
     data_dir: str = Field(default="data", description="RAG 数据存储目录")
     uploads_dir: str = Field(default="static/uploads", description="图片上传目录（挂载到 /static/uploads）")
 
+    # -------------------- 新增：鉴权/数据库/短信配置 --------------------
+    # MySQL 连接配置：建议在此处直接填写固定值；如需动态化，后续可接入 .env
+    mysql_host: str = Field(default="127.0.0.1", description="MySQL 主机")
+    mysql_port: int = Field(default=3306, description="MySQL 端口")
+    mysql_user: str = Field(default="root", description="MySQL 用户名")
+    mysql_password: str = Field(default="ysy979257", description="MySQL 密码")
+    mysql_db: str = Field(default="equipment_share", description="MySQL 数据库名")
+
+    # JWT 与会话
+    jwt_secret: str = Field(default="change-me-please", description="JWT HS256 密钥（生产务必更换）")
+    access_expires_minutes: int = Field(default=15, description="Access Token 过期分钟数")
+    refresh_expires_days: int = Field(default=14, description="Refresh Token 过期天数")
+
+    # 短信（开发模式）
+    sms_dev_mode: bool = Field(default=True, description="是否启用短信开发模式")
+    sms_dev_code: str = Field(default="000000", description="开发模式固定验证码")
+
+    # 限流（简单字符串表示，后续可扩展解析）
+    rate_limit_sms: str = Field(default="5/min", description="短信发送限流")
+    rate_limit_verify: str = Field(default="10/min", description="验证码验证限流")
+
+    # 默认管理员（开发用）。填写手机号后，首次登录将自动授予 ADMIN 角色
+    admin_default_phone: str = Field(default="000000", description="开发模式默认管理员手机号（留空则不启用）")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -54,6 +78,24 @@ def get_settings() -> Settings:
         log_level="INFO",
         data_dir="data",
         uploads_dir="static/uploads",
+        # DB 默认值（需根据你的环境修改）
+        mysql_host="127.0.0.1",
+        mysql_port=3306,
+        mysql_user="root",
+        mysql_password="ysy979257",
+        mysql_db="equipment_share",
+        # JWT & 会话
+        jwt_secret="change-me-please",
+        access_expires_minutes=15,
+        refresh_expires_days=14,
+        # 短信（开发模式）
+        sms_dev_mode=True,
+        sms_dev_code="000000",
+        # 限流
+        rate_limit_sms="5/min",
+        rate_limit_verify="10/min",
+        # 默认管理员手机号（开发）
+        admin_default_phone="000000",
     )
 
 

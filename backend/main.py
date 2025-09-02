@@ -26,7 +26,8 @@ from backend.core.config import get_settings
 from backend.core.logger import logger
 from backend.routers.chat import router as chat_router
 from backend.routers.equipment import router as equipment_router
-from backend.api import router as rag_router
+from backend.api import api_router
+from backend.core.db import init_db
 
 
 def create_app() -> FastAPI:
@@ -44,7 +45,7 @@ def create_app() -> FastAPI:
     # 路由
     app.include_router(chat_router)
     app.include_router(equipment_router)
-    app.include_router(rag_router)
+    app.include_router(api_router)
 
     # 静态文件
     static_dir = Path(__file__).resolve().parents[1] / "static"
@@ -62,6 +63,11 @@ def create_app() -> FastAPI:
         settings = get_settings()
         (Path(settings.data_dir)).mkdir(parents=True, exist_ok=True)
         (Path(settings.uploads_dir)).mkdir(parents=True, exist_ok=True)
+        # 初始化数据库（开发模式）
+        try:
+            init_db()
+        except Exception as e:
+            logger.error("db.init.error", extra={"event": "db_init_error", "error": str(e)})
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request: Request, exc: Exception):

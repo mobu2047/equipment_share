@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>租赁测试</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .wrap { max-width: 900px; margin: 30px auto; }
+    .card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+    .row { display:flex; gap:8px; margin:8px 0; }
+    input, textarea { flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:8px; }
+    .btn { padding: 8px 12px; background: var(--primary); color:#fff; border:none; border-radius:8px; cursor:pointer; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom:1px solid var(--border); padding:8px; text-align:left; }
+    th { color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2 style="margin-bottom:12px">租赁请求（使用 Authorization: Bearer <access_token>）</h2>
+    <div class="card">
+      <div class="row"><input id="device_id" placeholder="设备ID（可空）" /><input id="device_name" placeholder="设备名称快照（可空）" /></div>
+      <div class="row"><input id="req_start" placeholder="请求开始时间（ISO8601，可空）" /><input id="req_end" placeholder="请求结束时间（ISO8601，可空）" /></div>
+      <div class="row"><textarea id="remark" placeholder="备注（可空）"></textarea></div>
+      <div class="row" style="justify-content:flex-end"><button class="btn" id="create">发起请求</button></div>
+      <div id="msg"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><input id="filter_status" placeholder="筛选状态（可空）" /><button class="btn" id="load">加载列表</button></div>
+      <table>
+        <thead><tr><th>ID</th><th>状态</th><th>设备</th><th>请求时间</th><th>动作</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div><a href="/">返回首页</a></div>
+  </div>
+
+  <script>
+    function token(){ return localStorage.getItem('access_token') || ''; }
+    function setToken(tok){ localStorage.setItem('access_token', tok || ''); }
+    function setMsg(t){ document.getElementById('msg').textContent = t; }
+
+    async function refreshAccess(){
+      // 使用 Cookie 中的 refresh/session 旋转并获取新的 access_token
+      const r = await fetch('/api/v1/auth/refresh', { method:'POST' });
+      if (!r.ok) throw new Error('刷新凭据失败');
+      const data = await r.json();
+      if (data && data.access_token) setToken(data.access_token);
+      return data;
+    }
+
+    async function api(path, method='GET', body){
+      let resp = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() }, body: body?JSON.stringify(body):undefined });
+      if (resp.status === 401){
+        // 尝试刷新后重试一次
+        try{ await refreshAccess(); }catch(_){ throw new Error('未登录或会话已过期'); }
+        resp = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() }, body: body?JSON.stringify(body):undefined });
+      }
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp.json();
+    }
+
+    document.getElementById('create').addEventListener('click', async () => {
+      try {
+        const body = {
+          device_id: document.getElementById('device_id').value.trim() || null,
+          device_name: document.getElementById('device_name').value.trim() || null,
+          requested_start_at: document.getElementById('req_start').value.trim() || null,
+          requested_end_at: document.getElementById('req_end').value.trim() || null,
+          remark: document.getElementById('remark').value.trim() || null,
+        };
+        const data = await api('/api/v1/lease/requests', 'POST', body);
+        setMsg('创建成功: #' + data.id);
+        await load();
+      } catch(e){ setMsg('失败: ' + e); }
+    });
+
+    async function load(){
+      const st = document.getElementById('filter_status').value.trim() || '';
+      const q = st ? ('?status=' + encodeURIComponent(st)) : '';
+      const data = await api('/api/v1/lease/requests' + q);
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      for (const it of (data.items||[])){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${it.id}</td>
+          <td>${it.status}</td>
+          <td>${it.device_name_snapshot || it.device_id || '-'}</td>
+          <td>${it.requested_start_at || ''} ~ ${it.requested_end_at || ''}</td>
+          <td>
+            <button class="btn" onclick="confirmLease(${it.id})">确认</button>
+            <button class="btn" onclick="rejectLease(${it.id})">拒绝</button>
+            <button class="btn" onclick="cancelLease(${it.id})">取消</button>
+            <button class="btn" onclick="archiveLease(${it.id})">归档</button>
+            <button class="btn" onclick="deleteLease(${it.id})">删除</button>
+          </td>`;
+        tbody.appendChild(tr);
+      }
+    }
+    window.confirmLease = async function(id){ try{ await api(`/api/v1/lease/requests/${id}/confirm`, 'POST', { device_id: 'manual', confirmed_start_at: new Date().toISOString(), confirmed_end_at: new Date(Date.now()+3600000).toISOString() }); await load(); } catch(e){ alert(e); } }
+    window.rejectLease  = async function(id){ try{ await api(`/api/v1/lease/requests/${id}/reject`, 'POST', { reason: 'no' }); await load(); } catch(e){ alert(e); } }
+    window.cancelLease  = async function(id){ try{ await api(`/api/v1/lease/requests/${id}/cancel`, 'POST', { reason: 'cancel' }); await load(); } catch(e){ alert(e); } }
+    window.archiveLease = async function(id){ try{ await api(`/api/v1/lease/requests/${id}/archive`, 'POST'); await load(); } catch(e){ alert(e); } }
+    window.deleteLease = async function(id){ try{ await api(`/api/v1/lease/requests/${id}`, 'DELETE'); await load(); } catch(e){ alert(e); } }
+
+    document.getElementById('load').addEventListener('click', load);
+    load();
+  </script>
+</body>
+</html>
+
+

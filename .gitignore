@@ -11,5 +11,5 @@ __pycache__/
 data/*
 data/rag_store_faiss.json
 !data/.gitkeep
-static/uploads
-backend/__pycache__
+static/uploads/
+backend/__pycache__/

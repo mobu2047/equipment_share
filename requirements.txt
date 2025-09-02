@@ -12,4 +12,9 @@ requests==2.32.3
 aiohttp==3.9.5
 aiofiles==23.2.0
 
+sqlalchemy==2.0.30
+pymysql==1.1.1
+PyJWT==2.8.0
+cryptography==42.0.8
+
 

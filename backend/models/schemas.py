@@ -125,6 +125,59 @@ class SearchByMetaRequest(BaseModel):
     - min_score: 最小相关性阈值(0~1)，仅 fuzzy 模式有效（默认 0）
     - sort: 排序 {field, order}，field=relevance|name（默认 relevance desc）
     - page/size: 分页参数（size 最大 200）
+    -   name:
+        名称关键词
+        match_mode: exact | contains | fuzzy（默认 fuzzy）
+        min_score: 仅在 fuzzy 模式下生效（0~1）
+        metadata_filters: 键为元数据字段名，值为条件对象：
+        op: contains(默认) | eq | neq | in | gt | gte | lt | lte | range | exists
+        value: 用于 contains/eq/neq/in
+        min/max: 用于 range
+        logic: 字段间逻辑 AND | OR（默认 AND）
+        sort: {"field": "relevance"|"name", "order": "asc"|"desc"}
+        page/size: 分页，size 最大 200 
+    """
+    """
+    使用示例：模糊匹配名稱+and過濾：
+    curl -X POST http://localhost:8000/api/rag/search_by_meta \
+    -H "Content-Type: application/json" \
+    -d '{
+        "name": "扫描电镜",
+        "match_mode": "fuzzy",
+        "min_score": 0.55,
+        "metadata_filters": {
+          "单位名称": {"op": "contains", "value": "工业大学"},
+          "测试项目": {"op": "in", "value": ["形貌观察", "能谱分析"]}
+        },
+        "logic": "AND",
+        "sort": {"field": "relevance", "order": "desc"},
+        "page": 1,
+        "size": 20
+      }'
+    仅按 metadata 数值区间过滤
+    curl -X POST http://localhost:8000/api/rag/search_by_meta \
+    -H "Content-Type: application/json" \
+    -d '{
+        "metadata_filters": {
+          "加速电压": {"op": "range", "min": 5, "max": 30}
+        },
+        "page": 1,
+        "size": 10
+      }'
+    名称包含匹配 + OR 过滤
+    curl -X POST http://localhost:8000/api/rag/search_by_meta \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "显微镜",
+        "match_mode": "contains",
+        "metadata_filters": {
+          "单位名称": {"op": "contains", "value": "研究院"},
+          "测试项目": {"op": "contains", "value": "XRD"}
+        },
+        "logic": "OR",
+        "page": 1,
+        "size": 15
+      }'    
     """
 
     name: Optional[str] = Field(None, description="名称关键词")
@@ -154,4 +207,85 @@ class SearchByMetaResponse(BaseModel):
     size: int
     items: List[Dict[str, Any]]
 
+
+# ---------------- 鉴权/用户相关 ----------------
+class SMSRequest(BaseModel):
+    phone: str = Field(..., description="手机号")
+    scene: str = Field("login", description="场景：login|register")
+
+
+class SMSVerifyRequest(BaseModel):
+    phone: str
+    code: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = Field("bearer")
+
+
+class UserInfo(BaseModel):
+    id: int
+    phone: str
+    display_name: Optional[str] = None
+    roles: List[str] = []
+
+
+# ---------------- 租赁相关 ----------------
+class LeaseCreateRequest(BaseModel):
+    device_id: Optional[str] = Field(None, description="可选：RAG 条目 ID")
+    device_name: Optional[str] = Field(None, description="可选：设备名快照")
+    requested_start_at: Optional[str] = Field(None, description="请求开始时间 ISO8601")
+    requested_end_at: Optional[str] = Field(None, description="请求结束时间 ISO8601")
+    remark: Optional[str] = None
+
+
+class LeaseItem(BaseModel):
+    id: int
+    status: str
+    device_id: Optional[str]
+    device_name_snapshot: Optional[str]
+    requested_start_at: Optional[str]
+    requested_end_at: Optional[str]
+    confirmed_start_at: Optional[str]
+    confirmed_end_at: Optional[str]
+    created_at: str
+
+
+class LeaseListResponse(BaseModel):
+    total: int
+    page: int
+    size: int
+    items: List[LeaseItem]
+
+
+class LeaseConfirmRequest(BaseModel):
+    device_id: str
+    confirmed_start_at: str
+    confirmed_end_at: str
+    provider_user_id: Optional[int] = None
+
+
+class LeaseActionRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+# ---------------- 论坛相关 ----------------
+class ThreadCreateRequest(BaseModel):
+    title: str
+    content: str
+    category: str = Field("general")
+    lease_order_id: Optional[int] = None
+
+
+class ThreadListResponse(BaseModel):
+    total: int
+    page: int
+    size: int
+    items: List[Dict[str, Any]]
+
+
+class PostCreateRequest(BaseModel):
+    content: str
+    parent_post_id: Optional[int] = None
 
