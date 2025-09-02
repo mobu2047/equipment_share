@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.forum import ForumThread, ForumPost
 from backend.models.user import Role
+from backend.core.logger import logger
 
 
 class ForumService:
@@ -28,9 +29,27 @@ class ForumService:
         th = ForumThread(title=title, author_user_id=author_user_id, category=category, lease_order_id=lease_order_id, attachments_json=json.dumps(attachments or [], ensure_ascii=False))
         self.db.add(th)
         self.db.flush()
-        post = ForumPost(thread_id=th.id, author_user_id=author_user_id, content=content, attachments_json=json.dumps(attachments or [], ensure_ascii=False))
+        # 首帖固定为 1 楼
+        post = ForumPost(
+            thread_id=th.id,
+            author_user_id=author_user_id,
+            content=content or "",
+            attachments_json=json.dumps(attachments or [], ensure_ascii=False),
+            floor_no=1,
+        )
         self.db.add(post)
         self.db.commit()
+        # 结构化日志：创建线程与首帖
+        logger.info(
+            "forum.thread.create",
+            extra={
+                "event": "forum_thread_create",
+                "thread_id": th.id,
+                "author_user_id": author_user_id,
+                "category": category,
+                "attachments_count": len(attachments or []),
+            },
+        )
         return th
 
     def list_threads(self, *, category: Optional[str], lease_order_id: Optional[int], page: int, size: int) -> Tuple[int, List[ForumThread]]:
@@ -51,9 +70,47 @@ class ForumService:
 
     def create_post(self, *, thread_id: int, author_user_id: int, content: str, parent_post_id: Optional[int], attachments: Optional[List[str]] = None) -> ForumPost:
         th = self.get_thread(thread_id)
-        post = ForumPost(thread_id=th.id, author_user_id=author_user_id, content=content, parent_post_id=parent_post_id, attachments_json=json.dumps(attachments or [], ensure_ascii=False))
+        # 计算楼层号：优先基于最大 floor_no；若历史数据未填，退化为 COUNT(*)+1
+        from backend.models.forum import ForumPost as FP
+        last = (
+            self.db.query(FP.floor_no)
+            .filter(FP.thread_id == th.id)
+            .order_by(FP.floor_no.desc())
+            .first()
+        )
+        max_floor = (last[0] if last and last[0] else 0)
+        if max_floor <= 0:
+            # 历史数据未设置 floor_no 时的兜底：按已存在帖子数量 + 1
+            cnt = self.db.query(FP).filter(FP.thread_id == th.id).count()
+            next_floor = cnt + 1
+            logger.info(
+                "forum.post.floor_fallback",
+                extra={"event": "forum_floor_fallback", "thread_id": th.id, "computed_from_count": cnt},
+            )
+        else:
+            next_floor = max_floor + 1
+        post = ForumPost(
+            thread_id=th.id,
+            author_user_id=author_user_id,
+            content=content or "",
+            parent_post_id=parent_post_id,
+            attachments_json=json.dumps(attachments or [], ensure_ascii=False),
+            floor_no=next_floor,
+        )
         self.db.add(post)
         self.db.commit()
+        # 结构化日志：创建回复
+        logger.info(
+            "forum.post.create",
+            extra={
+                "event": "forum_post_create",
+                "thread_id": th.id,
+                "post_id": post.id,
+                "author_user_id": author_user_id,
+                "floor_no": next_floor,
+                "attachments_count": len(attachments or []),
+            },
+        )
         return post
 
     def delete_thread(self, *, thread_id: int, actor_user_id: int, actor_is_admin: bool) -> None:

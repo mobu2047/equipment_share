@@ -48,6 +48,8 @@ class ForumPost(Base):
     parent_post_id: Mapped[Optional[int]] = mapped_column(ForeignKey("forum_posts.id", ondelete="SET NULL"))
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     attachments_json: Mapped[Optional[str]] = mapped_column(Text)
+    # 贴内楼层号：每个线程内从 1 开始递增，用于前端展示固定序号
+    floor_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

@@ -6,10 +6,8 @@
   <component name="ChangeListManager">
     <list default="true" id="9a9b33b7-7663-4c81-9e14-79ca555e9300" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/core/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/core/config.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/core/db.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/core/db.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/models/forum.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/models/forum.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/models/schemas.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/models/schemas.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/routers/forum.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/routers/forum.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/services/forum_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/forum_service.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/static/forum.html" beforeDir="false" afterPath="$PROJECT_DIR$/static/forum.html" afterDir="false" />
@@ -159,7 +157,7 @@
       <workItem from="1756195601752" duration="1024000" />
       <workItem from="1756197961467" duration="7880000" />
       <workItem from="1756348190930" duration="30610000" />
-      <workItem from="1756718645536" duration="6370000" />
+      <workItem from="1756718645536" duration="12856000" />
     </task>
     <servers />
   </component>
@@ -291,6 +289,6 @@
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/equipment_share$import_excel.coverage" NAME="import_excel 覆盖结果" MODIFIED="1755854009598" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tools" />
     <SUITE FILE_PATH="coverage/equipment_share$scratch.coverage" NAME="scratch 覆盖结果" MODIFIED="1755848909650" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$APPLICATION_CONFIG_DIR$/scratches" />
-    <SUITE FILE_PATH="coverage/equipment_share$main.coverage" NAME="main 覆盖结果" MODIFIED="1756781787253" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/backend" />
+    <SUITE FILE_PATH="coverage/equipment_share$main.coverage" NAME="main 覆盖结果" MODIFIED="1756802247076" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/backend" />
   </component>
 </project>

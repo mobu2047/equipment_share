@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>帖子详情</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .wrap { max-width: 900px; margin: 30px auto; }
+    .card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+    .row { display:flex; gap:8px; margin:8px 0; }
+    input, textarea { flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:8px; }
+    .btn { padding: 8px 12px; background: var(--primary); color:#fff; border:none; border-radius:8px; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" id="thread"></div>
+    <div class="card">
+      <h3>回复</h3>
+      <div class="row"><textarea id="reply_content" placeholder="回复内容"></textarea></div>
+      <div class="row"><input type="file" id="reply_images" multiple accept="image/*" /></div>
+      <div class="row" style="justify-content:flex-end"><button class="btn" id="send">提交回复</button></div>
+      <div id="msg" style="color:#888"></div>
+    </div>
+    <div><a href="/static/forum.html">返回论坛</a></div>
+  </div>
+
+  <script>
+    function q(name){ const u=new URL(location.href); return u.searchParams.get(name); }
+    const threadId = Number(q('id') || '0');
+    function token(){ return localStorage.getItem('access_token') || ''; }
+    function setMsg(t){ document.getElementById('msg').textContent = t; }
+    async function refreshAccess(){
+      const r = await fetch('/api/v1/auth/refresh', { method:'POST', credentials:'include' });
+      if (!r.ok) throw new Error('刷新失败');
+      const data = await r.json();
+      if (data && data.access_token) localStorage.setItem('access_token', data.access_token);
+      return data;
+    }
+    async function api(path, method='GET', body){
+      let resp = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() }, body: body?JSON.stringify(body):undefined });
+      if (resp.status === 401){ await refreshAccess(); resp = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() }, body: body?JSON.stringify(body):undefined }); }
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp.json();
+    }
+    async function uploadOne(file){
+      const form = new FormData();
+      form.append('file', file);
+      let resp = await fetch('/api/v1/forum/uploads', { method:'POST', headers: { 'Authorization': 'Bearer ' + token() }, body: form });
+      if (resp.status === 401){ await refreshAccess(); resp = await fetch('/api/v1/forum/uploads', { method:'POST', headers: { 'Authorization': 'Bearer ' + token() }, body: form }); }
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp.json();
+    }
+
+    async function loadThread(){
+      const data = await api(`/api/v1/forum/threads/${threadId}`);
+      const el = document.getElementById('thread');
+      el.innerHTML = `
+        <h3>帖子 #${data.id} | 作者:${data.author_user_id}</h3>
+        <div>标题: ${data.title}</div>
+        <div>分类: ${data.category} ${data.lease_order_id?(' | 租赁#'+data.lease_order_id):''}</div>
+        ${(data.attachments||[]).map(u=>`<div><img src='${u}' style='max-width:100%;border:1px solid var(--border);margin:6px 0'/></div>`).join('')}
+        <h4 style="margin-top:12px">回复 (${data.posts.length})</h4>
+        <div>${data.posts.map(p=>`<div style='border-bottom:1px solid var(--border);padding:6px 0'>#${p.floor_no || p.id} | 作者:${p.author_user_id} | ${p.created_at}<br/>${p.content || ''}<br/>${(p.attachments||[]).map(u=>`<div><img src='${u}' style='max-width:100%;border:1px solid var(--border);margin:4px 0'/></div>`).join('')}</div>`).join('')}</div>
+      `;
+    }
+
+    document.getElementById('send').addEventListener('click', async () => {
+      try{
+        const content = (document.getElementById('reply_content').value || '').trim();
+        const files = document.getElementById('reply_images').files;
+        const urls = [];
+        for (const f of files){ const r = await uploadOne(f); if (r && r.url) urls.push(r.url); }
+        if (!content && urls.length===0) { setMsg('请输入内容或选择图片'); return; }
+        await api(`/api/v1/forum/threads/${threadId}/posts`, 'POST', { content, attachments: urls });
+        setMsg('已提交');
+        document.getElementById('reply_content').value = '';
+        document.getElementById('reply_images').value = '';
+        await loadThread();
+      }catch(e){ setMsg('失败: ' + e); }
+    });
+
+    if (!threadId){ document.getElementById('thread').textContent = '缺少帖子ID'; }
+    else { loadThread(); }
+  </script>
+</body>
+</html>
+
+
