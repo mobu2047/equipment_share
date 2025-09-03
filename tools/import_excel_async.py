@@ -587,33 +587,61 @@ class AsyncExcelImporter:
                                 if i in embedded_map:
                                     continue
                                 
-                                # 导出Shape图片
+                                # 导出Shape图片（优先使用Shape.Export高质量、无白边），失败时逐级回退
                                 try:
-                                    shp.CopyPicture(Appearance=1, Format=2)
-                                    left = getattr(shp, 'Left', 0)
-                                    top = getattr(shp, 'Top', 0)
-                                    width = max(int(getattr(shp, 'Width', 50)), 50)
-                                    height = max(int(getattr(shp, 'Height', 50)), 50)
-                                    
-                                    ch = ws.ChartObjects().Add(left, top, width, height)
-                                    ch.Chart.Paste()
-                                    
                                     # 使用同步版的哈希策略
                                     h = hashlib.md5(f"{file_path}:{sheet}:shape:{r}:{c}:{getattr(shp,'Name','')}".encode('utf-8')).hexdigest()[:16]
                                     fname = f"import_shape_{h}.png"
                                     # 先导出到临时目录，成功后再移动
                                     dst = self.uploads_tmp_dir / fname
-                                    
-                                    if not dst.exists():
-                                        ch.Chart.Export(str(dst))
-                                    
-                                    ch.Delete()
-                                    
+
+                                    exported = False
+
+                                    # 1) 直接导出Shape（最佳质量，无图表留白）
+                                    try:
+                                        shp.Export(str(dst), "PNG")
+                                        exported = dst.exists() and dst.stat().st_size > 0
+                                    except Exception:
+                                        exported = False
+
+                                    # 2) 回退：复制为矢量图片并导出选中形状
+                                    if not exported:
+                                        try:
+                                            # xlPicture = -4147 可避免位图失真
+                                            shp.CopyPicture(Appearance=1, Format=-4147)
+                                            ws.Paste()
+                                            try:
+                                                sel = app.Selection
+                                                shp2 = sel.ShapeRange(1)
+                                                shp2.Export(str(dst), "PNG")
+                                                # 清理临时形状
+                                                shp2.Delete()
+                                                exported = dst.exists() and dst.stat().st_size > 0
+                                            except Exception:
+                                                exported = False
+                                        except Exception:
+                                            exported = False
+
+                                    # 3) 最后回退：使用Chart对象导出（可能有留白）
+                                    if not exported:
+                                        try:
+                                            left = getattr(shp, 'Left', 0)
+                                            top = getattr(shp, 'Top', 0)
+                                            width = max(int(getattr(shp, 'Width', 50)), 50)
+                                            height = max(int(getattr(shp, 'Height', 50)), 50)
+                                            ch = ws.ChartObjects().Add(left, top, width, height)
+                                            ch.Chart.Paste()
+                                            ch.Chart.Export(str(dst))
+                                            ch.Delete()
+                                            exported = dst.exists() and dst.stat().st_size > 0
+                                        except Exception:
+                                            exported = False
+
                                     # 验证文件
-                                    if dst.exists() and dst.stat().st_size > 0:
+                                    if exported:
                                         embedded_map[i] = f"/static/uploads/{fname}"
                                         processed_count += 1
-                                        
+
                                 except Exception:
                                     continue
                                     
@@ -661,36 +689,50 @@ class AsyncExcelImporter:
                                 dispimg_count += 1
                                 
                                 try:
-                                    # 复制图片到剪贴板
-                                    cell.CopyPicture(Appearance=1, Format=2)
-                                    
-                                    # 获取单元格位置和大小
-                                    left = cell.Left
-                                    top = cell.Top
-                                    width = max(cell.Width, 50)
-                                    height = max(cell.Height, 50)
-                                    
-                                    # 创建临时图表对象用于导出
-                                    ch = ws.ChartObjects().Add(left, top, int(width), int(height))
-                                    ch.Chart.Paste()
-                                    
+                                    # 使用矢量方式复制并导出为形状，避免模糊及白边
+                                    exported = False
+
                                     # 使用同步版的哈希策略
                                     h = hashlib.md5(f"{file_path}:{sheet}:{r}:{col_idx}".encode("utf-8")).hexdigest()[:16]
                                     fname = f"import_disp_{h}.png"
                                     # 先导出到临时目录，成功后再移动
                                     dst = self.uploads_tmp_dir / fname
-                                    
-                                    # 导出图片
-                                    if not dst.exists():
-                                        ch.Chart.Export(str(dst))
-                                    
-                                    ch.Delete()
-                                    
+
+                                    try:
+                                        # xlPicture = -4147（矢量），xlScreen = 1
+                                        cell.CopyPicture(Appearance=1, Format=-4147)
+                                        ws.Paste()
+                                        try:
+                                            sel = app.Selection
+                                            shp = sel.ShapeRange(1)
+                                            shp.Export(str(dst), "PNG")
+                                            shp.Delete()
+                                            exported = dst.exists() and dst.stat().st_size > 0
+                                        except Exception:
+                                            exported = False
+                                    except Exception:
+                                        exported = False
+
+                                    # 回退：使用Chart对象导出
+                                    if not exported:
+                                        try:
+                                            left = cell.Left
+                                            top = cell.Top
+                                            width = max(cell.Width, 50)
+                                            height = max(cell.Height, 50)
+                                            ch = ws.ChartObjects().Add(int(left), int(top), int(width), int(height))
+                                            ch.Chart.Paste()
+                                            ch.Chart.Export(str(dst))
+                                            ch.Delete()
+                                            exported = dst.exists() and dst.stat().st_size > 0
+                                        except Exception:
+                                            exported = False
+
                                     # 验证并记录映射
-                                    if dst.exists() and dst.stat().st_size > 0:
+                                    if exported:
                                         embedded_map[i] = f"/static/uploads/{fname}"
                                         cell_processed += 1
-                                        
+
                                 except Exception:
                                     continue
                                     
@@ -1103,7 +1145,7 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # 拼接到 data 目录
-    file_path = os.path.join(base_dir, "..", "device_data.xlsx")
+    file_path = os.path.join(base_dir, "..", "data/device_data.xlsx")
     """命令行入口"""
     parser = argparse.ArgumentParser(description="异步并发Excel导入工具")
     parser.add_argument("--file", default = file_path, help="Excel文件路径")

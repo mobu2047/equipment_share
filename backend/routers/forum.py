@@ -62,10 +62,12 @@ async def get_thread(thread_id: int, db: Session = Depends(get_db)) -> Dict[str,
                 "author_user_id": p.author_user_id,
                 "content": p.content,
                 "parent_post_id": p.parent_post_id,
+                # 若历史数据未写入 floor_no，则按顺序补齐从 1 开始
+                "floor_no": (getattr(p, "floor_no", 0) or idx + 1),
                 "attachments": (json.loads(p.attachments_json) if getattr(p, 'attachments_json', None) else []),
                 "created_at": p.created_at.isoformat(),
             }
-            for p in posts
+            for idx, p in enumerate(posts)
         ],
     }
 
@@ -74,7 +76,14 @@ async def get_thread(thread_id: int, db: Session = Depends(get_db)) -> Dict[str,
 async def create_post(thread_id: int, body: PostCreateRequest, user=Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
     svc = ForumService(db)
     p = svc.create_post(thread_id=thread_id, author_user_id=user.id, content=body.content, parent_post_id=body.parent_post_id, attachments=body.attachments or [])
-    return {"id": p.id}
+    # 调试日志：返回创建后的关键信息，便于定位图片丢失/楼层错乱
+    return {
+        "id": p.id,
+        "thread_id": p.thread_id,
+        "author_user_id": p.author_user_id,
+        "floor_no": getattr(p, "floor_no", None),
+        "attachments": (json.loads(p.attachments_json) if getattr(p, 'attachments_json', None) else []),
+    }
 
 
 # 上传图片（multipart/form-data: file）

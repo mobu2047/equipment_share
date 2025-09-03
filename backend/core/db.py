@@ -137,6 +137,7 @@ def init_db() -> None:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE forum_threads ADD COLUMN IF NOT EXISTS attachments_json TEXT"))
             conn.execute(text("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS attachments_json TEXT"))
+            conn.execute(text("ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS floor_no INT NOT NULL DEFAULT 0"))
             conn.commit()
     except Exception:
         # MySQL 8.0 不支持 IF NOT EXISTS for ADD COLUMN，回退为探测列是否存在
@@ -149,6 +150,9 @@ def init_db() -> None:
                 res = conn.execute(text("SHOW COLUMNS FROM forum_posts LIKE 'attachments_json'"))
                 if res.fetchone() is None:
                     conn.execute(text("ALTER TABLE forum_posts ADD COLUMN attachments_json TEXT"))
+                res = conn.execute(text("SHOW COLUMNS FROM forum_posts LIKE 'floor_no'"))
+                if res.fetchone() is None:
+                    conn.execute(text("ALTER TABLE forum_posts ADD COLUMN floor_no INT NOT NULL DEFAULT 0"))
                 conn.commit()
         except Exception:
             pass
